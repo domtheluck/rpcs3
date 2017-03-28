@@ -207,15 +207,15 @@ namespace rsx
 		{
 			if (rsx->in_begin_end)
 			{
-				rsx->append_array_element(arg & 0xFFFF);
-				rsx->append_array_element(arg >> 16);
+				rsx->append_array_element(se_storage<u16>::swap(arg & 0xFFFF));
+				rsx->append_array_element(se_storage<u16>::swap(arg >> 16));
 			}
 		}
 
 		void set_array_element32(thread* rsx, u32, u32 arg)
 		{
 			if (rsx->in_begin_end)
-				rsx->append_array_element(arg);
+				rsx->append_array_element(se_storage<u32>::swap(arg));
 		}
 
 		void draw_arrays(thread* rsx, u32 _reg, u32 arg)

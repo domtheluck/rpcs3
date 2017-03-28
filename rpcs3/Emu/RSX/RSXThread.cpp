@@ -352,7 +352,7 @@ namespace rsx
 
 	void thread::append_array_element(u32 index)
 	{
-		element_push_buffer.push_back(se_storage<u32>::swap(index));
+		element_push_buffer.push_back(index);
 	}
 
 	u32 thread::get_push_buffer_index_count() const
