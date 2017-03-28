@@ -666,7 +666,7 @@ namespace rsx
 		if (element_push_buffer.size())
 		{
 			//Indices provided via immediate mode
-			return{(const gsl::byte*)element_push_buffer.data(), element_push_buffer.size() * sizeof(u32)};
+			return{(const gsl::byte*)element_push_buffer.data(), ::narrow<u32>(element_push_buffer.size() * sizeof(u32))};
 		}
 
 		u32 address = rsx::get_address(rsx::method_registers.index_array_address(), rsx::method_registers.index_array_location());
