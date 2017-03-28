@@ -351,7 +351,9 @@ namespace rsx
 	u16 vertex_texture::get_exact_mipmap_count() const
 	{
 		u16 max_mipmap_count = static_cast<u16>(floor(log2(std::max(width(), height()))) + 1);
-		return std::min(mipmap(), max_mipmap_count);
+		max_mipmap_count = std::min(mipmap(), max_mipmap_count);
+
+		return !!max_mipmap_count ? max_mipmap_count : 1;
 	}
 
 	u8 vertex_texture::unsigned_remap() const
