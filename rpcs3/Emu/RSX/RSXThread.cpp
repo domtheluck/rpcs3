@@ -352,7 +352,9 @@ namespace rsx
 
 	void thread::append_array_element(u32 index)
 	{
-		element_push_buffer.push_back(index);
+		//Endianness is swapped because common upload code expects input in BE
+		//TODO: Implement fast upload path for LE inputs and do away with this
+		element_push_buffer.push_back(se_storage<u32>::swap(index));
 	}
 
 	u32 thread::get_push_buffer_index_count() const
