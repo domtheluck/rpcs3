@@ -32,22 +32,77 @@ namespace
 		return{ X, Y, Z, 1 };
 	}
 
-	inline void stream_data_to_memory_swapped_128(void *dst, const void *src, u32 vertex_count)
+	inline void stream_data_to_memory_swapped_u32(void *dst, const void *src, u32 vertex_count, u8 stride)
 	{
-		//input vertex stream has to be float4 or int4 so we can copy swapped 128-bit chunks
-		const __m128i mask = _mm_set_epi8(0xE, 0xF, 0xC, 0xD, 0xA, 0xB, 0x8, 0x9, 0x6, 0x7, 0x4, 0x5, 0x2, 0x3, 0x0, 0x1);
+		const __m128i mask = _mm_set_epi8(
+			0xC, 0xD, 0xE, 0xF,
+			0x8, 0x9, 0xA, 0xB, 
+			0x4, 0x5, 0x6, 0x7, 
+			0x0, 0x1, 0x2, 0x3);
 
 		__m128i* dst_ptr = (__m128i*)dst;
 		__m128i* src_ptr = (__m128i*)src;
+
+		const u32 dword_count = (vertex_count * (stride >> 2));
+		const u32 iterations = dword_count >> 2;
+		const u32 remaining = dword_count % 4;
 		
-		for (u32 i = 0; i < vertex_count; ++i)
+		for (u32 i = 0; i < iterations; ++i)
 		{
+			u32 *src_words = (u32*)src_ptr;
+			u32 *dst_words = (u32*)dst_ptr;
 			const __m128i &vector = _mm_loadu_si128(src_ptr);
 			const __m128i &shuffled_vector = _mm_shuffle_epi8(vector, mask);
 			_mm_stream_si128(dst_ptr, shuffled_vector);
 
 			src_ptr++;
 			dst_ptr++;
+		}
+
+		if (remaining)
+		{
+			u32 *src_ptr2 = (u32 *)src_ptr;
+			u32 *dst_ptr2 = (u32 *)dst_ptr;
+
+			for (u32 i = 0; i < remaining; ++i)
+				dst_ptr2[i] = se_storage<u32>::swap(src_ptr2[i]);
+		}
+	}
+
+	inline void stream_data_to_memory_swapped_u16(void *dst, const void *src, u32 vertex_count, u8 stride)
+	{
+		const __m128i mask = _mm_set_epi8(
+			0xE, 0xF, 0xC, 0xD,
+			0xA, 0xB, 0x8, 0x9,
+			0x6, 0x7, 0x4, 0x5,
+			0x2, 0x3, 0x0, 0x1);
+
+		__m128i* dst_ptr = (__m128i*)dst;
+		__m128i* src_ptr = (__m128i*)src;
+
+		const u32 word_count = (vertex_count * (stride >> 1));
+		const u32 iterations = word_count >> 3;
+		const u32 remaining = word_count % 8;
+
+		for (u32 i = 0; i < iterations; ++i)
+		{
+			u32 *src_words = (u32*)src_ptr;
+			u32 *dst_words = (u32*)dst_ptr;
+			const __m128i &vector = _mm_loadu_si128(src_ptr);
+			const __m128i &shuffled_vector = _mm_shuffle_epi8(vector, mask);
+			_mm_stream_si128(dst_ptr, shuffled_vector);
+
+			src_ptr++;
+			dst_ptr++;
+		}
+
+		if (remaining)
+		{
+			u16 *src_ptr2 = (u16 *)src_ptr;
+			u16 *dst_ptr2 = (u16 *)dst_ptr;
+
+			for (u32 i = 0; i < remaining; ++i)
+				dst_ptr2[i] = se_storage<u16>::swap(src_ptr2[i]);
 		}
 	}
 
@@ -88,22 +143,26 @@ void write_vertex_array_data_to_buffer(gsl::span<gsl::byte> raw_dst_span, gsl::s
 	case rsx::vertex_base_type::sf:
 	case rsx::vertex_base_type::s32k:
 	{
-		gsl::span<u16> dst_span = as_span_workaround<u16>(raw_dst_span);
-		copy_whole_attribute_array<be_t<u16>>(dst_span, src_ptr, vector_element_count, dst_stride, attribute_src_stride, count);
+		if (attribute_src_stride != dst_stride)
+		{
+			gsl::span<u16> dst_span = as_span_workaround<u16>(raw_dst_span);
+			copy_whole_attribute_array<be_t<u16>>(dst_span, src_ptr, vector_element_count, dst_stride, attribute_src_stride, count);
+		}
+		else
+			stream_data_to_memory_swapped_u16(raw_dst_span.data(), src_ptr.data(), count, attribute_src_stride);
+
 		return;
 	}
 	case rsx::vertex_base_type::f:
 	{
-		if (attribute_src_stride == 16 && dst_stride == 16)
-		{
-			//Do a byte-swapped memcpy
-			stream_data_to_memory_swapped_128(raw_dst_span.data(), src_ptr.data(), count);
-		}
-		else
+		if (attribute_src_stride != dst_stride)
 		{
 			gsl::span<u32> dst_span = as_span_workaround<u32>(raw_dst_span);
 			copy_whole_attribute_array<be_t<u32>>(dst_span, src_ptr, vector_element_count, dst_stride, attribute_src_stride, count);
 		}
+		else
+			stream_data_to_memory_swapped_u32(raw_dst_span.data(), src_ptr.data(), count, attribute_src_stride);
+
 		return;
 	}
 	case rsx::vertex_base_type::cmp:
