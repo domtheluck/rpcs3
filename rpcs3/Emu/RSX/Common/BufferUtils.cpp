@@ -32,6 +32,25 @@ namespace
 		return{ X, Y, Z, 1 };
 	}
 
+	inline void stream_data_to_memory_swapped_128(void *dst, const void *src, u32 vertex_count)
+	{
+		//input vertex stream has to be float4 or int4 so we can copy swapped 128-bit chunks
+		const __m128i mask = _mm_set_epi8(0xE, 0xF, 0xC, 0xD, 0xA, 0xB, 0x8, 0x9, 0x6, 0x7, 0x4, 0x5, 0x2, 0x3, 0x0, 0x1);
+
+		__m128i* dst_ptr = (__m128i*)dst;
+		__m128i* src_ptr = (__m128i*)src;
+		
+		for (u32 i = 0; i < vertex_count; ++i)
+		{
+			const __m128i &vector = _mm_loadu_si128(src_ptr);
+			const __m128i &shuffled_vector = _mm_shuffle_epi8(vector, mask);
+			_mm_stream_si128(dst_ptr, shuffled_vector);
+
+			src_ptr++;
+			dst_ptr++;
+		}
+	}
+
 	template <typename U, typename T>
 	void copy_whole_attribute_array(gsl::span<T> dst, gsl::span<const gsl::byte> src_ptr, u8 attribute_size, u8 dst_stride, u32 src_stride, u32 vertex_count)
 	{
@@ -55,8 +74,14 @@ void write_vertex_array_data_to_buffer(gsl::span<gsl::byte> raw_dst_span, gsl::s
 	case rsx::vertex_base_type::ub:
 	case rsx::vertex_base_type::ub256:
 	{
-		gsl::span<u8> dst_span = as_span_workaround<u8>(raw_dst_span);
-		copy_whole_attribute_array<u8>(dst_span, src_ptr, vector_element_count, dst_stride, attribute_src_stride, count);
+		if (attribute_src_stride != dst_stride)
+		{
+			gsl::span<u8> dst_span = as_span_workaround<u8>(raw_dst_span);
+			copy_whole_attribute_array<u8>(dst_span, src_ptr, vector_element_count, dst_stride, attribute_src_stride, count);
+		}
+		else
+			memcpy(raw_dst_span.data(), src_ptr.data(), count * dst_stride);
+
 		return;
 	}
 	case rsx::vertex_base_type::s1:
@@ -69,8 +94,16 @@ void write_vertex_array_data_to_buffer(gsl::span<gsl::byte> raw_dst_span, gsl::s
 	}
 	case rsx::vertex_base_type::f:
 	{
-		gsl::span<u32> dst_span = as_span_workaround<u32>(raw_dst_span);
-		copy_whole_attribute_array<be_t<u32>>(dst_span, src_ptr, vector_element_count, dst_stride, attribute_src_stride, count);
+		if (attribute_src_stride == 16 && dst_stride == 16)
+		{
+			//Do a byte-swapped memcpy
+			stream_data_to_memory_swapped_128(raw_dst_span.data(), src_ptr.data(), count);
+		}
+		else
+		{
+			gsl::span<u32> dst_span = as_span_workaround<u32>(raw_dst_span);
+			copy_whole_attribute_array<be_t<u32>>(dst_span, src_ptr, vector_element_count, dst_stride, attribute_src_stride, count);
+		}
 		return;
 	}
 	case rsx::vertex_base_type::cmp:
