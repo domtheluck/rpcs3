@@ -102,7 +102,7 @@ after_success:
   - unset QTDIR; unset QT_PLUGIN_PATH ; unset LD_LIBRARY_PATH
   - ./linuxdeployqt*.AppImage ./appdir/usr/share/applications/*.desktop -bundle-non-qt-libs
   - ./linuxdeployqt*.AppImage ./appdir/usr/share/applications/*.desktop -appimage
-  - find ./appdir -executable -type f -exec ldd {} \; | grep " => /usr" | grep -v libpango | cut -d " " -f 2-3 | sort | uniq
+  - find ./appdir -executable -type f -exec ldd {} \; | grep " => /usr" | grep -v libpangoft | cut -d " " -f 2-3 | sort | uniq
   - curl --upload-file ./RPCS3*.AppImage https://transfer.sh/RPCS3-git.$(git rev-parse --short HEAD)-x86_64.AppImage
 
 deploy:
