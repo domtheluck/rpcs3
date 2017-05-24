@@ -442,9 +442,10 @@ GLFragmentProgram::~GLFragmentProgram()
 
 void GLFragmentProgram::Decompile(const RSXFragmentProgram& prog)
 {
-	u32 size;
+	u32 size = 0;
 	GLFragmentDecompilerThread decompiler(shader, parr, prog, size);
 	decompiler.Task();
+	
 	for (const ParamType& PT : decompiler.m_parr.params[PF_PARAM_UNIFORM])
 	{
 		for (const ParamItem& PI : PT.items)

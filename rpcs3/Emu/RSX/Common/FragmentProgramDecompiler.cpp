@@ -738,6 +738,8 @@ std::string FragmentProgramDecompiler::Decompile()
 		verify(HERE), m_offset % sizeof(u32) == 0;
 		data += m_offset / sizeof(u32);
 	}
+	
+	((RSXFragmentProgram*)&m_prog)->size = m_size;
 
 	// flush m_code_level
 	m_code_level = 1;

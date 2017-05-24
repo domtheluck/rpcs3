@@ -446,9 +446,16 @@ VKFragmentProgram::~VKFragmentProgram()
 
 void VKFragmentProgram::Decompile(const RSXFragmentProgram& prog)
 {
+	fs::create_path(fs::get_config_dir() + "/shaderlog");
+	fs::file(fs::get_config_dir() + "shaderlog/FragmentProgram.spirv", fs::rewrite).write(shader);
+	
 	u32 size;
 	VKFragmentDecompilerThread decompiler(shader, parr, prog, size, *this);
 	decompiler.Task();
+	
+	LOG_ERROR(RSX, "Dumping Shader; Compiled size = %d bytes", prog.size);
+	fs::create_path(fs::get_config_dir() + "/shaderlog");
+	fs::file(fs::get_config_dir() + "shaderlog/FragmentProgram.bin", fs::rewrite).write(prog.addr, prog.size);
 	
 	for (const ParamType& PT : decompiler.m_parr.params[PF_PARAM_UNIFORM])
 	{
