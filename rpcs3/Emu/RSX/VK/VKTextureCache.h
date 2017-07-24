@@ -243,7 +243,6 @@ namespace vk
 			}
 
 			protect(utils::protection::rw);
-			verify(HERE), locked == false;
 
 			void* pixels_src = dma_buffer->map(0, cpu_address_range);
 			void* pixels_dst = vm::base(cpu_address_base);
@@ -890,8 +889,8 @@ namespace vk
 							range_reset = true;
 						}
 
-						// Upgrade to writer lock
-						lock.upgrade();
+						//Warning: Will deadlock if a double fault occurs and we enter here from 'flush' method
+						//lock.upgrade();
 
 						tex.set_dirty(true);
 						tex.unprotect();
