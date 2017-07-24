@@ -716,7 +716,7 @@ namespace vk
 
 			reader_lock lock(m_cache_mutex);
 
-			auto &found = m_cache.find(address);
+			auto found = m_cache.find(address);
 			if (found != m_cache.end())
 			{
 				auto &range_data = found->second;
