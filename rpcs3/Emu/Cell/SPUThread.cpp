@@ -96,7 +96,7 @@ namespace spu
 				else
 				{
 					//Slight pause if function is overburdened
-					thread_ctrl::wait();
+					thread_ctrl::wait_for(100);
 				}
 			}
 
