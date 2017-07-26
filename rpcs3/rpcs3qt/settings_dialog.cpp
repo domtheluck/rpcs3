@@ -405,7 +405,7 @@ settings_dialog::settings_dialog(std::shared_ptr<gui_settings> xSettings, const 
 	ui->scrictModeRendering->setToolTip(json_gpu_main["scrictModeRendering"].toString());
 
 	xemu_settings->EnhanceCheckBox(ui->disableVertexCache, emu_settings::DisableVertexCache);
-	ui->scrictModeRendering->setToolTip(json_gpu_main["disableVertexCache"].toString());
+	ui->disableVertexCache->setToolTip(json_gpu_main["disableVertexCache"].toString());
 
 	// Graphics Adapter
 	QStringList D3D12Adapters = r_Creator.D3D12Adapters;
