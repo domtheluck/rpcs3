@@ -30,7 +30,7 @@
 			"spuLoopDetection": "Try to detect loop conditions in SPU kernels and use them as scheduling hints.\nImproves performance and reduces CPU usage"
 		},
 		"comboboxes": {
-			"preferredSPUThreads": "Preffered number of threads allowed to enter some sensitive SPU stages.\nSome SPU stages are sensitive to race conditions and allowing a limited number at a time helps alleviate performance stalls.\nSetting this to a smaller value might improve performance and reduce stuttering in some games.\nLeave this on auto if performance is negatively affected when setting a small value"
+			"preferredSPUThreads": "Preferred number of threads allowed to enter some sensitive SPU stages.\nSome SPU stages are sensitive to race conditions and allowing a limited number at a time helps alleviate performance stalls.\nSetting this to a smaller value might improve performance and reduce stuttering in some games.\nLeave this on auto if performance is negatively affected when setting a small value"
 		}
 	},
 	"debug": {
