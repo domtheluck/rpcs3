@@ -358,7 +358,8 @@ namespace rsx
 			case CELL_GCM_ZCULL_STATS1:
 			case CELL_GCM_ZCULL_STATS2:
 			case CELL_GCM_ZCULL_STATS3:
-				result->value = 0;
+				result->value = rsx->get_zcull_samples_passed();
+				LOG_WARNING(RSX, "NV4097_GET_REPORT: Unimplemented type %d", type);
 				break;
 
 			default:
@@ -384,6 +385,8 @@ namespace rsx
 				LOG_ERROR(RSX, "NV4097_CLEAR_REPORT_VALUE: Bad type: %d", arg);
 				break;
 			}
+
+			rsx->clear_zcull_stats();
 		}
 
 		void set_surface_dirty_bit(thread* rsx, u32 _reg, u32)
@@ -412,6 +415,28 @@ namespace rsx
 		void set_idbuf_dirty_bit(thread* rsx, u32, u32)
 		{
 			rsx->m_index_buffer_changed = true;
+		}
+
+		void set_zcull_render_mode(thread* rsx, u32, u32 arg)
+		{
+			const u32 mode = arg >> 24;
+			if (mode != 1)
+			{
+				LOG_ERROR(RSX, "NV4097_SET_RENDER_ENABLE(arg=0x%X, mode=%d, offset=%d)", arg, mode, arg & 0xFFFFFF);
+				rsx->conditional_render_enabled = true;
+			}
+			else
+				rsx->conditional_render_enabled = false;
+		}
+
+		void set_zcull_render_enable(thread* rsx, u32, u32 arg)
+		{
+			LOG_ERROR(RSX, "NV4097_SET_ZCULL_EN(arg=0x%X)", arg);
+		}
+
+		void set_zcull_stats_enable(thread* rsx, u32, u32 arg)
+		{
+			LOG_ERROR(RSX, "NV4097_SET_ZCULL_STATS_EN(arg=0x%X)", arg);
 		}
 	}
 
@@ -1486,6 +1511,9 @@ namespace rsx
 		bind_range<NV4097_SET_TEXTURE_BORDER_COLOR, 8, 16, nv4097::set_texture_dirty_bit>();
 		bind_range<NV4097_SET_VERTEX_DATA_ARRAY_OFFSET, 1, 16, nv4097::set_vertex_array_dirty_bit>();
 		bind<NV4097_SET_INDEX_ARRAY_ADDRESS, nv4097::set_idbuf_dirty_bit>();
+		bind<NV4097_SET_RENDER_ENABLE, nv4097::set_zcull_render_mode>();
+		bind<NV4097_SET_ZCULL_EN, nv4097::set_zcull_render_enable>();
+		bind<NV4097_SET_ZCULL_STATS_ENABLE, nv4097::set_zcull_stats_enable>();
 
 		//NV308A
 		bind_range<NV308A_COLOR, 1, 256, nv308a::color>();

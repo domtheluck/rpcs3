@@ -183,6 +183,7 @@ namespace rsx
 		std::set<u32> m_used_gcm_commands;
 		bool invalid_command_interrupt_raised = false;
 		bool in_begin_end = false;
+		bool conditional_render_enabled = false;
 
 	protected:
 		thread();
@@ -211,6 +212,12 @@ namespace rsx
 		virtual void flip(int buffer) = 0;
 		virtual u64 timestamp() const;
 		virtual bool on_access_violation(u32 /*address*/, bool /*is_writing*/) { return false; }
+
+		//zcull
+		virtual void begin_zcull_render() {}
+		virtual void end_zcull_render() {}
+		virtual void clear_zcull_stats() {}
+		virtual u32 get_zcull_samples_passed() { return 0; }
 
 		gsl::span<const gsl::byte> get_raw_index_array(const std::vector<std::pair<u32, u32> >& draw_indexed_clause) const;
 		gsl::span<const gsl::byte> get_raw_vertex_buffer(const rsx::data_array_format_info&, u32 base_offset, const std::vector<std::pair<u32, u32>>& vertex_ranges) const;

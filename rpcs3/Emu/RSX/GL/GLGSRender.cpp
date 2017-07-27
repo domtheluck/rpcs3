@@ -542,6 +542,8 @@ void GLGSRender::end()
 		m_last_draw_indexed = false;
 	}
 
+	LOG_ERROR(RSX, "Draw, vtx=%d", vertex_draw_count);
+
 	m_attrib_ring_buffer->notify();
 	m_index_ring_buffer->notify();
 	m_scale_offset_buffer->notify();
@@ -1182,4 +1184,18 @@ void GLGSRender::synchronize_buffers()
 bool GLGSRender::scaled_image_from_memory(rsx::blit_src_info& src, rsx::blit_dst_info& dst, bool interpolate)
 {
 	return m_gl_texture_cache.upload_scaled_image(src, dst, interpolate, m_rtts);
+}
+
+void GLGSRender::begin_zcull_render()
+{}
+
+void GLGSRender::end_zcull_render()
+{}
+
+void GLGSRender::clear_zcull_stats()
+{}
+
+u32 GLGSRender::get_zcull_samples_passed()
+{
+	return 0xFFFFFFFF;
 }

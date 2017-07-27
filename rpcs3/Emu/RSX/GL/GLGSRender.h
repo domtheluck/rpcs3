@@ -101,6 +101,8 @@ private:
 	//vaos are mandatory for core profile
 	gl::vao m_vao;
 
+	std::array<GLint64, rsx::limits::zculls_count> zcull_smaples_count;
+
 public:
 	GLGSRender();
 
@@ -136,6 +138,11 @@ protected:
 	u64 timestamp() const override;
 
 	void do_local_task() override;
+
+	void begin_zcull_render() override;
+	void end_zcull_render() override;
+	void clear_zcull_stats() override;
+	u32 get_zcull_samples_passed() override;
 
 	bool on_access_violation(u32 address, bool is_writing) override;
 
