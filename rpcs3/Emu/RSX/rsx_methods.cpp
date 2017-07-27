@@ -362,12 +362,7 @@ namespace rsx
 			switch (type)
 			{
 			case CELL_GCM_ZPASS_PIXEL_CNT:
-<<<<<<< bb80044d2a4b2d116717dfad3c837364a687667e
-				// todo: actual zculling, here we just report max, which seems to be enough for most games, but causes them to render *everything*
-				result->value = 0xFFFFFFFF;
-=======
 				result->value = rsx->get_zcull_samples_passed();
->>>>>>> zcull impl wip 2
 				break;
 			case CELL_GCM_ZCULL_STATS:
 			case CELL_GCM_ZCULL_STATS1:
