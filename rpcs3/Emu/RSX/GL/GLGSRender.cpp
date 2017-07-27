@@ -194,10 +194,15 @@ void GLGSRender::begin()
 	if (skip_frame)
 		return;
 
+	if (conditional_render_enabled && conditional_render_test_failed)
+		return;
+
 	init_buffers();
 
 	if (!framebuffer_status_valid)
 		return;
+
+	check_zcull_status(false);
 
 	std::chrono::time_point<steady_clock> then = steady_clock::now();
 
@@ -330,7 +335,7 @@ void GLGSRender::end()
 	std::chrono::time_point<steady_clock> program_start = steady_clock::now();
 	//Load program here since it is dependent on vertex state
 
-	if (skip_frame || !framebuffer_status_valid || !load_program())
+	if (skip_frame || !framebuffer_status_valid || (conditional_render_enabled && conditional_render_test_failed) || !load_program())
 	{
 		rsx::thread::end();
 		return;
@@ -542,8 +547,6 @@ void GLGSRender::end()
 		m_last_draw_indexed = false;
 	}
 
-	LOG_ERROR(RSX, "Draw, vtx=%d", vertex_draw_count);
-
 	m_attrib_ring_buffer->notify();
 	m_index_ring_buffer->notify();
 	m_scale_offset_buffer->notify();
@@ -699,6 +702,9 @@ void GLGSRender::on_init_thread()
 		m_gl_sampler_states[i].bind(i);
 	}
 
+	//Occlusion query
+	glGenQueries(1, &occlusion_query_handle);
+
 	//Clip planes are shader controlled; enable all planes driver-side
 	glEnable(GL_CLIP_DISTANCE0 + 0);
 	glEnable(GL_CLIP_DISTANCE0 + 1);
@@ -774,6 +780,7 @@ void GLGSRender::on_exit()
 	m_text_printer.close();
 	m_gl_texture_cache.close();
 
+	glDeleteQueries(1, &occlusion_query_handle);
 	return GSRender::on_exit();
 }
 
@@ -1186,16 +1193,76 @@ bool GLGSRender::scaled_image_from_memory(rsx::blit_src_info& src, rsx::blit_dst
 	return m_gl_texture_cache.upload_scaled_image(src, dst, interpolate, m_rtts);
 }
 
-void GLGSRender::begin_zcull_render()
-{}
+void GLGSRender::check_zcull_status(bool framebuffer_swap)
+{
+	if (framebuffer_swap)
+	{
+		zcull_surface_active = false;
+		const u32 zeta_address = depth_surface_info.address;
 
-void GLGSRender::end_zcull_render()
-{}
+		if (zeta_address)
+		{
+			//Find zeta address in bound zculls
+			for (int i = 0; i < rsx::limits::zculls_count; i++)
+			{
+				if (zculls[i].binded)
+				{
+					const u32 rsx_address = rsx::get_address(zculls[i].offset, CELL_GCM_LOCATION_LOCAL);
+					if (rsx_address == zeta_address)
+					{
+						zcull_surface_active = true;
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	if (query_active)
+	{
+		if (!zcull_rendering_enabled || !zcull_stats_enabled || !zcull_surface_active)
+		{
+			glEndQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE);
+			query_active = false;
+		}
+	}
+	else
+	{
+		if (zcull_rendering_enabled && zcull_stats_enabled && zcull_surface_active)
+		{
+			glBeginQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE, occlusion_query_handle);
+			query_active = true;
+			
+			//TODO: Investigate start-stop policy; aggregate vs clear
+			occlusion_query_result = 0;
+		}
+	}
+}
 
 void GLGSRender::clear_zcull_stats()
-{}
+{
+	if (query_active)
+	{
+		glEndQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE);
+		query_active = false;
+	}
+
+	occlusion_query_result = 0;
+}
 
 u32 GLGSRender::get_zcull_samples_passed()
 {
-	return 0xFFFFFFFF;
+	if (occlusion_query_result == 0)
+	{
+		GLint status = GL_FALSE;
+		glGetQueryObjectiv(occlusion_query_handle, GL_QUERY_RESULT_AVAILABLE, &status);
+
+		if (status != GL_TRUE)
+			LOG_ERROR(RSX, "Query result not available. This is gonna hurt...");
+
+		//TODO: Decide what to do if query result is not yet ready. We should never stall the pipeline
+		glGetQueryObjectiv(occlusion_query_handle, GL_QUERY_RESULT, &occlusion_query_result);
+	}
+	
+	return static_cast<u32>(occlusion_query_result);
 }

@@ -101,7 +101,11 @@ private:
 	//vaos are mandatory for core profile
 	gl::vao m_vao;
 
-	std::array<GLint64, rsx::limits::zculls_count> zcull_smaples_count;
+	//occlusion query
+	bool query_active = false;
+	bool zcull_surface_active = false;
+	GLuint occlusion_query_handle = 0;
+	GLint occlusion_query_result = 0;
 
 public:
 	GLGSRender();
@@ -126,6 +130,7 @@ public:
 	work_item& post_flush_request(u32 address, gl::texture_cache::cached_texture_section *section);
 
 	bool scaled_image_from_memory(rsx::blit_src_info& src_info, rsx::blit_dst_info& dst_info, bool interpolate) override;
+	void check_zcull_status(bool framebuffer_swap);
 
 protected:
 	void begin() override;
@@ -139,8 +144,6 @@ protected:
 
 	void do_local_task() override;
 
-	void begin_zcull_render() override;
-	void end_zcull_render() override;
 	void clear_zcull_stats() override;
 	u32 get_zcull_samples_passed() override;
 

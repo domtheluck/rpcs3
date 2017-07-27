@@ -327,12 +327,10 @@ namespace rsx
 			}
 		}
 
-		void get_report(thread* rsx, u32 _reg, u32 arg)
+		vm::addr_t get_report_data_impl(u32 offset)
 		{
-			u8 type = arg >> 24;
-			u32 offset = arg & 0xffffff;
+			u32 location = 0;
 			blit_engine::context_dma report_dma = method_registers.context_dma_report();
-			u32 location;
 
 			switch (report_dma)
 			{
@@ -340,28 +338,44 @@ namespace rsx
 			case blit_engine::context_dma::report_location_main: location = CELL_GCM_CONTEXT_DMA_REPORT_LOCATION_MAIN; break;
 			case blit_engine::context_dma::memory_host_buffer: location = CELL_GCM_CONTEXT_DMA_MEMORY_HOST_BUFFER; break;
 			default:
-				LOG_WARNING(RSX, "nv4097::get_report: bad report dma: 0x%x", (u8)report_dma);
+				return vm::addr_t(0);
+			}
+
+			return vm::cast(get_address(offset, location));
+		}
+
+		void get_report(thread* rsx, u32 _reg, u32 arg)
+		{
+			u8 type = arg >> 24;
+			u32 offset = arg & 0xffffff;
+
+			auto address_ptr = get_report_data_impl(offset);
+			if (!address_ptr)
+			{
+				LOG_ERROR(RSX, "Bad argument passed to NV4097_GET_REPORT, arg=0x%X", arg);
 				return;
 			}
 
-			vm::ps3::ptr<CellGcmReportData> result = vm::cast(get_address(offset, location));
-
+			vm::ps3::ptr<CellGcmReportData> result = address_ptr;
 			result->timer = rsx->timestamp();
 
 			switch (type)
 			{
 			case CELL_GCM_ZPASS_PIXEL_CNT:
+<<<<<<< bb80044d2a4b2d116717dfad3c837364a687667e
 				// todo: actual zculling, here we just report max, which seems to be enough for most games, but causes them to render *everything*
 				result->value = 0xFFFFFFFF;
+=======
+				result->value = rsx->get_zcull_samples_passed();
+>>>>>>> zcull impl wip 2
 				break;
 			case CELL_GCM_ZCULL_STATS:
 			case CELL_GCM_ZCULL_STATS1:
 			case CELL_GCM_ZCULL_STATS2:
 			case CELL_GCM_ZCULL_STATS3:
-				result->value = rsx->get_zcull_samples_passed();
+				result->value = 0;
 				LOG_WARNING(RSX, "NV4097_GET_REPORT: Unimplemented type %d", type);
 				break;
-
 			default:
 				result->value = 0;
 				LOG_ERROR(RSX, "NV4097_GET_REPORT: Bad type %d", type);
@@ -387,6 +401,47 @@ namespace rsx
 			}
 
 			rsx->clear_zcull_stats();
+		}
+
+		void set_render_mode(thread* rsx, u32, u32 arg)
+		{
+			const u32 mode = arg >> 24;
+			switch (mode)
+			{
+			case 1:
+				rsx->conditional_render_enabled = false;
+				break;
+			case 2:
+				rsx->conditional_render_enabled = true;
+				break;
+			default:
+				rsx->conditional_render_enabled = false;
+				LOG_ERROR(RSX, "Unknown render mode %d", mode);
+				return;
+			}
+
+			const u32 offset = arg & 0xffffff;
+			auto address_ptr = get_report_data_impl(offset);
+
+			if (!address_ptr)
+			{
+				rsx->conditional_render_test_failed = false;
+				LOG_ERROR(RSX, "Could not resolve report offset 0x%X", offset);
+				return;
+			}
+
+			vm::ps3::ptr<CellGcmReportData> report = address_ptr;
+			rsx->conditional_render_test_failed = (report->value == 0);
+		}
+
+		void set_zcull_render_enable(thread* rsx, u32, u32 arg)
+		{
+			rsx->zcull_rendering_enabled = !!arg;
+		}
+
+		void set_zcull_stats_enable(thread* rsx, u32, u32 arg)
+		{
+			rsx->zcull_stats_enabled = !!arg;
 		}
 
 		void set_surface_dirty_bit(thread* rsx, u32 _reg, u32)
@@ -415,28 +470,6 @@ namespace rsx
 		void set_idbuf_dirty_bit(thread* rsx, u32, u32)
 		{
 			rsx->m_index_buffer_changed = true;
-		}
-
-		void set_zcull_render_mode(thread* rsx, u32, u32 arg)
-		{
-			const u32 mode = arg >> 24;
-			if (mode != 1)
-			{
-				LOG_ERROR(RSX, "NV4097_SET_RENDER_ENABLE(arg=0x%X, mode=%d, offset=%d)", arg, mode, arg & 0xFFFFFF);
-				rsx->conditional_render_enabled = true;
-			}
-			else
-				rsx->conditional_render_enabled = false;
-		}
-
-		void set_zcull_render_enable(thread* rsx, u32, u32 arg)
-		{
-			LOG_ERROR(RSX, "NV4097_SET_ZCULL_EN(arg=0x%X)", arg);
-		}
-
-		void set_zcull_stats_enable(thread* rsx, u32, u32 arg)
-		{
-			LOG_ERROR(RSX, "NV4097_SET_ZCULL_STATS_EN(arg=0x%X)", arg);
 		}
 	}
 
@@ -1511,7 +1544,7 @@ namespace rsx
 		bind_range<NV4097_SET_TEXTURE_BORDER_COLOR, 8, 16, nv4097::set_texture_dirty_bit>();
 		bind_range<NV4097_SET_VERTEX_DATA_ARRAY_OFFSET, 1, 16, nv4097::set_vertex_array_dirty_bit>();
 		bind<NV4097_SET_INDEX_ARRAY_ADDRESS, nv4097::set_idbuf_dirty_bit>();
-		bind<NV4097_SET_RENDER_ENABLE, nv4097::set_zcull_render_mode>();
+		bind<NV4097_SET_RENDER_ENABLE, nv4097::set_render_mode>();
 		bind<NV4097_SET_ZCULL_EN, nv4097::set_zcull_render_enable>();
 		bind<NV4097_SET_ZCULL_STATS_ENABLE, nv4097::set_zcull_stats_enable>();
 

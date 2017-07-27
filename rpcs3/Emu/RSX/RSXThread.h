@@ -183,7 +183,11 @@ namespace rsx
 		std::set<u32> m_used_gcm_commands;
 		bool invalid_command_interrupt_raised = false;
 		bool in_begin_end = false;
+
+		bool conditional_render_test_failed = false;
 		bool conditional_render_enabled = false;
+		bool zcull_stats_enabled = false;
+		bool zcull_rendering_enabled = false;
 
 	protected:
 		thread();
@@ -214,8 +218,6 @@ namespace rsx
 		virtual bool on_access_violation(u32 /*address*/, bool /*is_writing*/) { return false; }
 
 		//zcull
-		virtual void begin_zcull_render() {}
-		virtual void end_zcull_render() {}
 		virtual void clear_zcull_stats() {}
 		virtual u32 get_zcull_samples_passed() { return 0; }
 
