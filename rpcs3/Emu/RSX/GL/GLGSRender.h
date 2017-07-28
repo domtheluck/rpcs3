@@ -112,12 +112,26 @@ private:
 		bool active;
 	};
 
+	struct
+	{
+		u32 zpass_pixel_cnt;
+		u32 zcull_stats;
+		u32 zcull_stats1;
+		u32 zcull_stats2;
+		u32 zcull_stats3;
+
+		void clear()
+		{
+			zpass_pixel_cnt = zcull_stats = zcull_stats1 = zcull_stats2 = zcull_stats3 = 0;
+		}
+	}
+	current_zcull_stats;
+
 	struct occlusion_task
 	{
 		std::vector<occlusion_query_info*> task_stack;
 		u32 aggregate;
 		u32 rsx_address;
-		u32 stat_type;
 		u32 pending;
 
 		void reset()
@@ -126,7 +140,6 @@ private:
 			rsx_address = 0;
 			aggregate = 0;
 			pending = 0;
-			stat_type = CELL_GCM_ZPASS_PIXEL_CNT;
 		}
 
 		void remove_one()
@@ -139,13 +152,11 @@ private:
 			task_stack.push_back(query);
 			pending++;
 		}
-	};
-	
-	occlusion_task current_task = {};
+	}
+	current_task = {};
 
 	const u32 occlusion_query_count = 128;
 	std::array<occlusion_query_info, 128> occlusion_query_data = {};
-	std::unordered_map<u32, occlusion_task> occlusion_tasks;
 
 public:
 	GLGSRender();
@@ -172,7 +183,7 @@ public:
 	bool scaled_image_from_memory(rsx::blit_src_info& src_info, rsx::blit_dst_info& dst_info, bool interpolate) override;
 	
 	void check_zcull_status(bool framebuffer_swap);
-	u32 write_report_data_to_dma_location(bool forced = false, bool all = false);
+	u32 synchronize_zcull_stats(bool hard_sync = false);
 
 protected:
 	void begin() override;
@@ -187,9 +198,8 @@ protected:
 	void do_local_task() override;
 
 	void notify_zcull_info_changed() override;
-	void clear_zcull_stats() override;
-	void write_zcull_stats(u32 stat, u32 rsx_address) override;
-	bool get_any_zcull_passed(u32 rsx_address) override;
+	void clear_zcull_stats(u32 type) override;
+	u32 get_zcull_stats(u32 type) override;
 
 	bool on_access_violation(u32 address, bool is_writing) override;
 

@@ -357,8 +357,6 @@ namespace rsx
 			}
 
 			vm::ps3::ptr<CellGcmReportData> result = address_ptr;
-			result->timer = rsx->timestamp();
-			result->value = 0;
 
 			switch (type)
 			{
@@ -367,14 +365,16 @@ namespace rsx
 			case CELL_GCM_ZCULL_STATS1:
 			case CELL_GCM_ZCULL_STATS2:
 			case CELL_GCM_ZCULL_STATS3:
-				rsx->write_zcull_stats(type, static_cast<u32>(address_ptr));
+				result->value = rsx->get_zcull_stats(type);
 				LOG_WARNING(RSX, "NV4097_GET_REPORT: Unimplemented type %d", type);
 				break;
 			default:
-				result->padding = 0;
 				LOG_ERROR(RSX, "NV4097_GET_REPORT: Bad type %d", type);
 				break;
 			}
+
+			result->timer = rsx->timestamp();
+			result->padding = 0;
 		}
 
 		void clear_report_value(thread* rsx, u32 _reg, u32 arg)
@@ -392,7 +392,7 @@ namespace rsx
 				break;
 			}
 
-			rsx->clear_zcull_stats();
+			rsx->clear_zcull_stats(arg);
 		}
 
 		void set_render_mode(thread* rsx, u32, u32 arg)
@@ -415,7 +415,16 @@ namespace rsx
 
 			const u32 offset = arg & 0xffffff;
 			auto address_ptr = get_report_data_impl(offset);
-			rsx->conditional_render_test_failed = rsx->get_any_zcull_passed(static_cast<u32>(address_ptr));
+
+			if (!address_ptr)
+			{
+				rsx->conditional_render_test_failed = false;
+				LOG_ERROR(RSX, "Bad argument passed to NV4097_SET_RENDER_ENABLE, arg=0x%X", arg);
+				return;
+			}
+
+			vm::ps3::ptr<CellGcmReportData> result = address_ptr;
+			rsx->conditional_render_test_failed = (result->value == 0);
 		}
 
 		void set_zcull_render_enable(thread* rsx, u32, u32 arg)

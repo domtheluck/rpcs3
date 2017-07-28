@@ -876,9 +876,8 @@ bool GLGSRender::do_method(u32 cmd, u32 arg)
 
 		return true;
 	}
-	case NV4097_BACK_END_WRITE_SEMAPHORE_RELEASE:
-		write_report_data_to_dma_location(true, true);
 	case NV4097_TEXTURE_READ_SEMAPHORE_RELEASE:
+	case NV4097_BACK_END_WRITE_SEMAPHORE_RELEASE:
 		flush_draw_buffers = true;
 		return true;
 	}
@@ -992,9 +991,6 @@ bool GLGSRender::load_program()
 
 void GLGSRender::flip(int buffer)
 {
-	// Flush report data
-	write_report_data_to_dma_location();
-
 	if (skip_frame)
 	{
 		m_frame->flip(m_context, true);
@@ -1256,7 +1252,7 @@ void GLGSRender::check_zcull_status(bool framebuffer_swap)
 		if (zcull_rendering_enabled && testing_enabled && zcull_surface_active)
 		{
 			//Find query
-			u32 free_index = write_report_data_to_dma_location(true, false);
+			u32 free_index = synchronize_zcull_stats();
 			query = &occlusion_query_data[free_index];
 			current_task.add(query);
 
@@ -1267,135 +1263,81 @@ void GLGSRender::check_zcull_status(bool framebuffer_swap)
 	}
 }
 
-void GLGSRender::clear_zcull_stats()
+void GLGSRender::clear_zcull_stats(u32 type)
 {
-	//BeginQuery will clear for us automatically
-	//This can be used to optimize
-}
-
-void GLGSRender::write_zcull_stats(u32 stat, u32 rsx_address)
-{
-	auto &task = occlusion_tasks[rsx_address];
-	task = current_task;
-	task.rsx_address = rsx_address;
-	task.stat_type = stat;
-
-	current_task.reset();
-	
-	if (task.task_stack.size() > 0)
+	if (type == CELL_GCM_ZPASS_PIXEL_CNT)
 	{
-		auto last = task.task_stack.back();
-		if (last->active)
-		{
-			current_task.add(last);
-			task.remove_one();
-		}
+		synchronize_zcull_stats(true);
+		current_zcull_stats.clear();
 	}
-
-	write_report_data_to_dma_location();
 }
 
-bool GLGSRender::get_any_zcull_passed(u32 rsx_address)
+u32 GLGSRender::get_zcull_stats(u32 type)
 {
-	auto &task = occlusion_tasks[rsx_address];
-	if (!task.pending) return false;
-
-	while (task.pending == task.task_stack.size())
-		write_report_data_to_dma_location();
-
-	return (task.aggregate != 0);
+	switch (type)
+	{
+	case CELL_GCM_ZPASS_PIXEL_CNT:
+	{
+		synchronize_zcull_stats(true);
+		return (current_zcull_stats.zpass_pixel_cnt > 0)? UINT32_MAX: 0;
+	}
+	case CELL_GCM_ZCULL_STATS:
+	case CELL_GCM_ZCULL_STATS1:
+	case CELL_GCM_ZCULL_STATS2:
+		//TODO
+		return UINT16_MAX;
+	case CELL_GCM_ZCULL_STATS3:
+	{
+		//Some kind of inverse value
+		if (current_zcull_stats.zpass_pixel_cnt > 0)
+			return 0;
+		
+		synchronize_zcull_stats(true);
+		return (current_zcull_stats.zpass_pixel_cnt > 0) ? 0 : UINT16_MAX;
+	}
+	default:
+		LOG_ERROR(RSX, "Unknown zcull stat type %d", type);
+		return 0;
+	}
 }
 
-u32 GLGSRender::write_report_data_to_dma_location(bool forced, bool all)
+u32 GLGSRender::synchronize_zcull_stats(bool hard_sync)
 {
 	if (!zcull_rendering_enabled)
 		return 0;
 
-	u32 result = 0xFFFF;
-	GLint count;
+	u32 result = UINT16_MAX;
+	GLint count, status;
 
-	auto process_task = [&](occlusion_task& task, u32 rsx_address)
+	for (auto &query : current_task.task_stack)
 	{
-		if (task.pending > 0)
-		{
-			for (auto &query : task.task_stack)
-			{
-				if (!query || query->active)
-					continue;
+		if (query == nullptr || query->active)
+			continue;
 
-				if (!all)
-				{
-					GLint status = GL_TRUE;
-					glGetQueryObjectiv(query->handle, GL_QUERY_RESULT_AVAILABLE, &status);
+		glGetQueryObjectiv(query->handle, GL_QUERY_RESULT_AVAILABLE, &status);
 
-					if (!status)
-						continue;
-				}
+		if (status == GL_FALSE && !hard_sync)
+			continue;
 
-				glGetQueryObjectiv(query->handle, GL_QUERY_RESULT, &count);
-				task.aggregate += count;
-				task.pending--;
+		glGetQueryObjectiv(query->handle, GL_QUERY_RESULT, &count);
+		query->pending = false;
+		query = nullptr;
 
-				query->pending = false;
-				query = nullptr;
-			}
-		}
+		current_zcull_stats.zpass_pixel_cnt += count;
+	}
 
-		if (task.pending == 0 && rsx_address)
-		{
-			const u32 passed = task.aggregate;
-			const u32 failed = passed > 0x80 ? 0 : 0xFFFFFFFF; //TODO
-
-			u32 value = 0;
-
-			switch (task.stat_type)
-			{
-			case CELL_GCM_ZPASS_PIXEL_CNT:
-				value = passed;
-				break;
-			case CELL_GCM_ZCULL_STATS:
-			case CELL_GCM_ZCULL_STATS1:
-			case CELL_GCM_ZCULL_STATS2:
-				value = 0xFFFF;
-				break;
-			case CELL_GCM_ZCULL_STATS3:
-				value = failed;
-				break;
-			}
-
-			vm::ps3::ptr<CellGcmReportData> result = vm::addr_t(rsx_address);
-			result->value = value;
-			//result->timer = timestamp();
-			result->padding = 0;
-
-			task.reset();
-		}
-	};
-
-	do
+	for (int i = 0; i < occlusion_query_count; ++i)
 	{
-		for (auto It = occlusion_tasks.begin(); It != occlusion_tasks.end(); It++)
+		auto &query = occlusion_query_data[i];
+		if (!query.pending && !query.active)
 		{
-			auto &task = It->second;
-			auto address = It->first;
-
-			process_task(task, address);
+			result = i;
+			break;
 		}
+	}
 
-		if (current_task.task_stack.size() > 0)
-			process_task(current_task, 0);
-
-		for (u32 i = 0; i < occlusion_query_count; ++i)
-		{
-			auto &query = occlusion_query_data[i];
-			if (!query.active && !query.pending)
-			{
-				result = i;
-				break;
-			}
-		}
-
-	} while ((forced && result == 0xFFFF));
+	if (result == UINT16_MAX && !hard_sync)
+		return synchronize_zcull_stats(true);
 
 	return result;
 }
