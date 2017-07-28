@@ -453,12 +453,12 @@ void GLGSRender::end()
 		int texture_index = i + rsx::limits::fragment_textures_count;
 		int location;
 
-/*		if (!rsx::method_registers.vertex_textures[i].enabled())
+		if (!rsx::method_registers.vertex_textures[i].enabled())
 		{
-			glActiveTexture(GL_TEXTURE0 + texture_index);
-			glBindTexture(GL_TEXTURE_2D, 0);
+			//glActiveTexture(GL_TEXTURE0 + texture_index);
+			//glBindTexture(GL_TEXTURE_2D, 0);
 			continue;
-		} */
+		}
 
 		if (m_program->uniforms.has_location("vtex" + std::to_string(i), &location))
 		{
@@ -1063,10 +1063,8 @@ void GLGSRender::flip(int buffer)
 	}
 
 	// Blit source image to the screen
-	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	// Disable scissor test (affects blit)
 	glDisable(GL_SCISSOR_TEST);
-	glDisable(GL_DEPTH_TEST);
-	glDisable(GL_STENCIL_TEST);
 
 	gl::screen.clear(gl::buffers::color_depth_stencil);
 	__glcheck m_flip_fbo.blit(gl::screen, screen_area, areai(aspect_ratio).flipped_vertical(), gl::buffers::color, gl::filter::linear);

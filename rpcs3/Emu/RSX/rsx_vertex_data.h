@@ -83,6 +83,7 @@ struct push_buffer_vertex_info
 		{
 		case vertex_base_type::f:
 			return size;
+		case vertex_base_type::s1:
 		case vertex_base_type::ub:
 		case vertex_base_type::ub256:
 			return 1;
