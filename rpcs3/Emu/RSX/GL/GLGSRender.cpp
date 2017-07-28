@@ -1212,7 +1212,7 @@ void GLGSRender::check_zcull_status(bool framebuffer_swap)
 	occlusion_query_info* query = nullptr;
 
 	if (current_task.task_stack.size() > 0)
-		query = current_task.task_stack.back();
+		query = current_task.active_query;
 
 	if (query && query->active)
 	{
@@ -1300,6 +1300,7 @@ u32 GLGSRender::synchronize_zcull_stats(bool hard_sync)
 		query = nullptr;
 
 		current_zcull_stats.zpass_pixel_cnt += count;
+		current_task.pending--;
 	}
 
 	for (u32 i = 0; i < occlusion_query_count; ++i)

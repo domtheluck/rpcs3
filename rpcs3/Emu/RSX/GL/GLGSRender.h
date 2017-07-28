@@ -130,11 +130,14 @@ private:
 	struct occlusion_task
 	{
 		std::vector<occlusion_query_info*> task_stack;
-		u32 pending;
+		occlusion_query_info* active_query = nullptr;
+		u32 pending = 0;
 
 		//Add one query to the task
 		void add(occlusion_query_info* query)
 		{
+			active_query = query;
+
 			if (task_stack.size() > 0 && pending == 0)
 				task_stack.resize(0);
 
