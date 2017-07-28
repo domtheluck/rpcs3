@@ -358,26 +358,23 @@ namespace rsx
 
 			vm::ps3::ptr<CellGcmReportData> result = address_ptr;
 			result->timer = rsx->timestamp();
+			result->value = 0;
 
 			switch (type)
 			{
 			case CELL_GCM_ZPASS_PIXEL_CNT:
-				result->value = rsx->get_zcull_samples_passed();
-				break;
 			case CELL_GCM_ZCULL_STATS:
 			case CELL_GCM_ZCULL_STATS1:
 			case CELL_GCM_ZCULL_STATS2:
 			case CELL_GCM_ZCULL_STATS3:
-				result->value = 0;
+				rsx->write_zcull_stats(type, static_cast<u32>(address_ptr));
 				LOG_WARNING(RSX, "NV4097_GET_REPORT: Unimplemented type %d", type);
 				break;
 			default:
-				result->value = 0;
+				result->padding = 0;
 				LOG_ERROR(RSX, "NV4097_GET_REPORT: Bad type %d", type);
 				break;
 			}
-			// This padding is needed to be set to 0, as games may use it for sync
-			result->padding = 0;
 		}
 
 		void clear_report_value(thread* rsx, u32 _reg, u32 arg)
@@ -405,7 +402,8 @@ namespace rsx
 			{
 			case 1:
 				rsx->conditional_render_enabled = false;
-				break;
+				rsx->conditional_render_test_failed = false;
+				return;
 			case 2:
 				rsx->conditional_render_enabled = true;
 				break;
@@ -417,26 +415,25 @@ namespace rsx
 
 			const u32 offset = arg & 0xffffff;
 			auto address_ptr = get_report_data_impl(offset);
-
-			if (!address_ptr)
-			{
-				rsx->conditional_render_test_failed = false;
-				LOG_ERROR(RSX, "Could not resolve report offset 0x%X", offset);
-				return;
-			}
-
-			vm::ps3::ptr<CellGcmReportData> report = address_ptr;
-			rsx->conditional_render_test_failed = (report->value == 0);
+			rsx->conditional_render_test_failed = rsx->get_any_zcull_passed(static_cast<u32>(address_ptr));
 		}
 
 		void set_zcull_render_enable(thread* rsx, u32, u32 arg)
 		{
 			rsx->zcull_rendering_enabled = !!arg;
+			rsx->notify_zcull_info_changed();
 		}
 
 		void set_zcull_stats_enable(thread* rsx, u32, u32 arg)
 		{
 			rsx->zcull_stats_enabled = !!arg;
+			rsx->notify_zcull_info_changed();
+		}
+
+		void set_zcull_pixel_count_enable(thread* rsx, u32, u32 arg)
+		{
+			rsx->zcull_pixel_cnt_enabled = !!arg;
+			rsx->notify_zcull_info_changed();
 		}
 
 		void set_surface_dirty_bit(thread* rsx, u32 _reg, u32)
@@ -1542,6 +1539,7 @@ namespace rsx
 		bind<NV4097_SET_RENDER_ENABLE, nv4097::set_render_mode>();
 		bind<NV4097_SET_ZCULL_EN, nv4097::set_zcull_render_enable>();
 		bind<NV4097_SET_ZCULL_STATS_ENABLE, nv4097::set_zcull_stats_enable>();
+		bind<NV4097_SET_ZPASS_PIXEL_COUNT_ENABLE, nv4097::set_zcull_pixel_count_enable>();
 
 		//NV308A
 		bind_range<NV308A_COLOR, 1, 256, nv308a::color>();

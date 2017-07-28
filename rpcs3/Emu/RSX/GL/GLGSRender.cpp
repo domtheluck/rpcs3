@@ -202,8 +202,6 @@ void GLGSRender::begin()
 	if (!framebuffer_status_valid)
 		return;
 
-	check_zcull_status(false);
-
 	std::chrono::time_point<steady_clock> then = steady_clock::now();
 
 	bool color_mask_b = rsx::method_registers.color_mask_b();
@@ -703,7 +701,15 @@ void GLGSRender::on_init_thread()
 	}
 
 	//Occlusion query
-	glGenQueries(1, &occlusion_query_handle);
+	for (u32 i = 0; i < occlusion_query_count; ++i)
+	{
+		auto &query = occlusion_query_data[i];
+		glGenQueries(1, &query.handle);
+		
+		query.pending = false;
+		query.active = false;
+		query.result = 0;
+	}
 
 	//Clip planes are shader controlled; enable all planes driver-side
 	glEnable(GL_CLIP_DISTANCE0 + 0);
@@ -780,7 +786,15 @@ void GLGSRender::on_exit()
 	m_text_printer.close();
 	m_gl_texture_cache.close();
 
-	glDeleteQueries(1, &occlusion_query_handle);
+	for (u32 i = 0; i < occlusion_query_count; ++i)
+	{
+		auto &query = occlusion_query_data[i];
+		query.active = false;
+		query.pending = false;
+
+		glDeleteQueries(1, &query.handle);
+	}
+
 	return GSRender::on_exit();
 }
 
@@ -862,8 +876,9 @@ bool GLGSRender::do_method(u32 cmd, u32 arg)
 
 		return true;
 	}
-	case NV4097_TEXTURE_READ_SEMAPHORE_RELEASE:
 	case NV4097_BACK_END_WRITE_SEMAPHORE_RELEASE:
+		write_report_data_to_dma_location(true, true);
+	case NV4097_TEXTURE_READ_SEMAPHORE_RELEASE:
 		flush_draw_buffers = true;
 		return true;
 	}
@@ -977,6 +992,9 @@ bool GLGSRender::load_program()
 
 void GLGSRender::flip(int buffer)
 {
+	// Flush report data
+	write_report_data_to_dma_location();
+
 	if (skip_frame)
 	{
 		m_frame->flip(m_context, true);
@@ -1218,51 +1236,171 @@ void GLGSRender::check_zcull_status(bool framebuffer_swap)
 		}
 	}
 
-	if (query_active)
+	bool testing_enabled = zcull_pixel_cnt_enabled || zcull_stats_enabled;
+	occlusion_query_info* query = nullptr;
+
+	if (current_task.task_stack.size() > 0)
+		query = current_task.task_stack.back();
+
+	if (query && query->active)
 	{
-		if (!zcull_rendering_enabled || !zcull_stats_enabled || !zcull_surface_active)
+		if (!zcull_rendering_enabled || !testing_enabled || !zcull_surface_active)
 		{
 			glEndQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE);
-			query_active = false;
+			query->active = false;
+			query->pending = true;
 		}
 	}
 	else
 	{
-		if (zcull_rendering_enabled && zcull_stats_enabled && zcull_surface_active)
+		if (zcull_rendering_enabled && testing_enabled && zcull_surface_active)
 		{
-			glBeginQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE, occlusion_query_handle);
-			query_active = true;
-			
-			//TODO: Investigate start-stop policy; aggregate vs clear
-			occlusion_query_result = 0;
+			//Find query
+			u32 free_index = write_report_data_to_dma_location(true, false);
+			query = &occlusion_query_data[free_index];
+			current_task.add(query);
+
+			glBeginQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE, query->handle);
+			query->active = true;
+			query->result = 0;
 		}
 	}
 }
 
 void GLGSRender::clear_zcull_stats()
 {
-	if (query_active)
-	{
-		glEndQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE);
-		query_active = false;
-	}
-
-	occlusion_query_result = 0;
+	//BeginQuery will clear for us automatically
+	//This can be used to optimize
 }
 
-u32 GLGSRender::get_zcull_samples_passed()
+void GLGSRender::write_zcull_stats(u32 stat, u32 rsx_address)
 {
-	if (occlusion_query_result == 0)
-	{
-		GLint status = GL_FALSE;
-		glGetQueryObjectiv(occlusion_query_handle, GL_QUERY_RESULT_AVAILABLE, &status);
+	auto &task = occlusion_tasks[rsx_address];
+	task = current_task;
+	task.rsx_address = rsx_address;
+	task.stat_type = stat;
 
-		if (status != GL_TRUE)
-			LOG_ERROR(RSX, "Query result not available. This is gonna hurt...");
-
-		//TODO: Decide what to do if query result is not yet ready. We should never stall the pipeline
-		glGetQueryObjectiv(occlusion_query_handle, GL_QUERY_RESULT, &occlusion_query_result);
-	}
+	current_task.reset();
 	
-	return static_cast<u32>(occlusion_query_result);
+	if (task.task_stack.size() > 0)
+	{
+		auto last = task.task_stack.back();
+		if (last->active)
+		{
+			current_task.add(last);
+			task.remove_one();
+		}
+	}
+
+	write_report_data_to_dma_location();
+}
+
+bool GLGSRender::get_any_zcull_passed(u32 rsx_address)
+{
+	auto &task = occlusion_tasks[rsx_address];
+	if (!task.pending) return false;
+
+	while (task.pending == task.task_stack.size())
+		write_report_data_to_dma_location();
+
+	return (task.aggregate != 0);
+}
+
+u32 GLGSRender::write_report_data_to_dma_location(bool forced, bool all)
+{
+	if (!zcull_rendering_enabled)
+		return 0;
+
+	u32 result = 0xFFFF;
+	GLint count;
+
+	auto process_task = [&](occlusion_task& task, u32 rsx_address)
+	{
+		if (task.pending > 0)
+		{
+			for (auto &query : task.task_stack)
+			{
+				if (!query || query->active)
+					continue;
+
+				if (!all)
+				{
+					GLint status = GL_TRUE;
+					glGetQueryObjectiv(query->handle, GL_QUERY_RESULT_AVAILABLE, &status);
+
+					if (!status)
+						continue;
+				}
+
+				glGetQueryObjectiv(query->handle, GL_QUERY_RESULT, &count);
+				task.aggregate += count;
+				task.pending--;
+
+				query->pending = false;
+				query = nullptr;
+			}
+		}
+
+		if (task.pending == 0 && rsx_address)
+		{
+			const u32 passed = task.aggregate;
+			const u32 failed = passed > 0x80 ? 0 : 0xFFFFFFFF; //TODO
+
+			u32 value = 0;
+
+			switch (task.stat_type)
+			{
+			case CELL_GCM_ZPASS_PIXEL_CNT:
+				value = passed;
+				break;
+			case CELL_GCM_ZCULL_STATS:
+			case CELL_GCM_ZCULL_STATS1:
+			case CELL_GCM_ZCULL_STATS2:
+				value = 0xFFFF;
+				break;
+			case CELL_GCM_ZCULL_STATS3:
+				value = failed;
+				break;
+			}
+
+			vm::ps3::ptr<CellGcmReportData> result = vm::addr_t(rsx_address);
+			result->value = value;
+			//result->timer = timestamp();
+			result->padding = 0;
+
+			task.reset();
+		}
+	};
+
+	do
+	{
+		for (auto It = occlusion_tasks.begin(); It != occlusion_tasks.end(); It++)
+		{
+			auto &task = It->second;
+			auto address = It->first;
+
+			process_task(task, address);
+		}
+
+		if (current_task.task_stack.size() > 0)
+			process_task(current_task, 0);
+
+		for (u32 i = 0; i < occlusion_query_count; ++i)
+		{
+			auto &query = occlusion_query_data[i];
+			if (!query.active && !query.pending)
+			{
+				result = i;
+				break;
+			}
+		}
+
+	} while ((forced && result == 0xFFFF));
+
+	return result;
+}
+
+void GLGSRender::notify_zcull_info_changed()
+{
+	check_zcull_status(false);
 }

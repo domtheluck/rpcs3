@@ -188,6 +188,7 @@ namespace rsx
 		bool conditional_render_enabled = false;
 		bool zcull_stats_enabled = false;
 		bool zcull_rendering_enabled = false;
+		bool zcull_pixel_cnt_enabled = false;
 
 	protected:
 		thread();
@@ -218,8 +219,10 @@ namespace rsx
 		virtual bool on_access_violation(u32 /*address*/, bool /*is_writing*/) { return false; }
 
 		//zcull
+		virtual void notify_zcull_info_changed() {}
 		virtual void clear_zcull_stats() {}
-		virtual u32 get_zcull_samples_passed() { return 0; }
+		virtual void write_zcull_stats(u32 stat, u32 rsx_address) {}
+		virtual bool get_any_zcull_passed(u32 rsx_address) { return false; }
 
 		gsl::span<const gsl::byte> get_raw_index_array(const std::vector<std::pair<u32, u32> >& draw_indexed_clause) const;
 		gsl::span<const gsl::byte> get_raw_vertex_buffer(const rsx::data_array_format_info&, u32 base_offset, const std::vector<std::pair<u32, u32>>& vertex_ranges) const;
