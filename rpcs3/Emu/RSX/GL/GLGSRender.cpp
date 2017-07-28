@@ -1242,7 +1242,7 @@ void GLGSRender::check_zcull_status(bool framebuffer_swap)
 	{
 		if (!zcull_rendering_enabled || !testing_enabled || !zcull_surface_active)
 		{
-			glEndQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE);
+			glEndQuery(GL_ANY_SAMPLES_PASSED);
 			query->active = false;
 			query->pending = true;
 		}
@@ -1256,7 +1256,7 @@ void GLGSRender::check_zcull_status(bool framebuffer_swap)
 			query = &occlusion_query_data[free_index];
 			current_task.add(query);
 
-			glBeginQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE, query->handle);
+			glBeginQuery(GL_ANY_SAMPLES_PASSED, query->handle);
 			query->active = true;
 			query->result = 0;
 		}
@@ -1267,7 +1267,7 @@ void GLGSRender::clear_zcull_stats(u32 type)
 {
 	if (type == CELL_GCM_ZPASS_PIXEL_CNT)
 	{
-		synchronize_zcull_stats(true);
+		//synchronize_zcull_stats(true);
 		current_zcull_stats.clear();
 	}
 }
@@ -1326,7 +1326,7 @@ u32 GLGSRender::synchronize_zcull_stats(bool hard_sync)
 		current_zcull_stats.zpass_pixel_cnt += count;
 	}
 
-	for (int i = 0; i < occlusion_query_count; ++i)
+	for (u32 i = 0; i < occlusion_query_count; ++i)
 	{
 		auto &query = occlusion_query_data[i];
 		if (!query.pending && !query.active)

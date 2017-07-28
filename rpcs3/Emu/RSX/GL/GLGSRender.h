@@ -130,25 +130,28 @@ private:
 	struct occlusion_task
 	{
 		std::vector<occlusion_query_info*> task_stack;
-		u32 aggregate;
-		u32 rsx_address;
 		u32 pending;
 
-		void reset()
-		{
-			task_stack.clear();
-			rsx_address = 0;
-			aggregate = 0;
-			pending = 0;
-		}
-
-		void remove_one()
-		{
-			task_stack.pop_back();
-		}
-
+		//Add one query to the task
 		void add(occlusion_query_info* query)
 		{
+			if (task_stack.size() > 0 && pending == 0)
+				task_stack.resize(0);
+
+			const auto empty_slots = task_stack.size() - pending;
+			if (empty_slots >= 4)
+			{
+				for (auto &_query : task_stack)
+				{
+					if (_query == nullptr)
+					{
+						_query = query;
+						pending++;
+						return;
+					}
+				}
+			}
+
 			task_stack.push_back(query);
 			pending++;
 		}
