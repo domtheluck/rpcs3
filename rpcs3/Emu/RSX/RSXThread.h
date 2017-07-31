@@ -110,6 +110,7 @@ namespace rsx
 		bool interleaved = false;
 		u32  base_offset = 0;
 		u32  real_offset_address = 0;
+		u32  attribute_mask = 0;
 		u8   memory_location = 0;
 		u8   attribute_stride = 0;
 	};

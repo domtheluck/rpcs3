@@ -993,6 +993,7 @@ namespace rsx
 			//inlined arrays are always interleaved
 			interleaved_range_info info = {};
 			info.interleaved = true;
+			info.attribute_mask = UINT32_MAX;
 
 			vertex_input_layout result = {};
 			result.interleaved_blocks.push_back(info);
@@ -1003,6 +1004,7 @@ namespace rsx
 		result.interleaved_blocks.push_back({});
 
 		auto &layout_info = result.interleaved_blocks.back();
+		layout_info.base_offset = UINT32_MAX;
 
 		for (u8 index = 0; index < rsx::limits::vertex_count; ++index)
 		{
@@ -1027,7 +1029,7 @@ namespace rsx
 			if (info.size() > 0)
 			{
 				const u32 base_address = info.offset() & 0x7fffffff;
-				if (layout_info.base_offset == 0)
+				if (layout_info.base_offset == UINT32_MAX)
 				{
 					layout_info.base_offset = base_address;
 					layout_info.attribute_stride = info.stride();
@@ -1062,12 +1064,14 @@ namespace rsx
 						layout_info.base_offset = base_address;
 					}
 				}
+
+				layout_info.attribute_mask |= (1u << index);
 			}
 		}
 
 		for (auto &info : result.interleaved_blocks)
 		{
-			info.interleaved = (info.base_offset != 0);
+			info.interleaved = (info.base_offset != UINT32_MAX);
 
 			if (info.interleaved)
 				info.real_offset_address = state.vertex_data_base_offset() + rsx::get_address(info.base_offset, info.memory_location);

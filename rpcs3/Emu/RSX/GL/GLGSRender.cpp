@@ -956,13 +956,15 @@ bool GLGSRender::load_program()
 		{
 			//Fill vertex attribute state
 			s32 *input_attribs = (s32*)(buf + 469 * 4 * sizeof(float));
+
+			u32 stride = vertex_layout_interleaved.interleaved_blocks[0].attribute_stride;
 			const u32 min_address = vertex_layout_interleaved.interleaved_blocks[0].base_offset;
+			const u32 attrib_mask = vertex_layout_interleaved.interleaved_blocks[0].attribute_mask;
 
 			bool is_inline_array = false;
-			u32 stride = 0;
 			u32 swap_mask = 1 << 16;
 
-			if (min_address == 0)
+			if (stride == 0)
 			{
 				//inlined array
 				for (auto &info : rsx::method_registers.vertex_arrays_info)
@@ -982,15 +984,15 @@ bool GLGSRender::load_program()
 
 			for (int i = 0; i < rsx::limits::vertex_count; ++i)
 			{
+				if ((attrib_mask & (1u << i)) == 0)
+					continue;
+
 				auto &info = rsx::method_registers.vertex_arrays_info[i];
 				if (!info.size()) continue;
 
 				u32 offset;
 				u32 mask = swap_mask;
 				s32 size = (s32)info.size();
-
-				if (stride == 0 && min_address != 0)
-					stride = info.stride();
 
 				if (is_inline_array)
 				{
