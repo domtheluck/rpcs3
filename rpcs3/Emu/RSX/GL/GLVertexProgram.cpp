@@ -368,6 +368,9 @@ namespace
 			return;
 		}
 
+		if (arrays_only)
+			return;
+
 		LOG_WARNING(RSX, "Vertex input %s does not have a matching vertex_input declaration", PI.name.c_str());
 		OS << "	vec4 " << PI.name << "= vec4(0.);\n";
 	}
