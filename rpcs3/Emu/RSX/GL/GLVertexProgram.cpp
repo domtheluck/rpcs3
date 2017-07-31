@@ -238,7 +238,7 @@ namespace
 
 		OS << "vec4 fetch_attribute(attribute_desc desc, int vertex_id)\n";
 		OS << "{\n";
-		OS << "	vec4 result = vec4(1.);\n";
+		OS << "	vec4 result = vec4(0., 0., 0., 1.);\n";
 		OS << "	vec4 scale = vec4(1.);\n";
 		OS << "	ivec4 tmp;\n";
 		OS << "	int bits;\n";
@@ -283,6 +283,14 @@ namespace
 		OS << "			break;\n";
 		OS << "		case 5:\n";
 		OS << "			//cmp\n";
+		OS << "			tmp[0] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			tmp[1] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			bits = get_bits(tmp.xy, desc.swap_bytes);\n";
+		OS << "			result.x = (bits & 0x7FF);\n";
+		OS << "			result.y = (bits >> 11) & 0x7FF;\n";
+		OS << "			result.z = (bits >> 22) & 0x3FF;\n";
+		OS << "			result.w = 1.f;\n";
+		OS << "			scale = vec4(1023., 1023., 511., 1.);\n";
 		OS << "			break;\n";
 		OS << "		case 6:\n";
 		OS << "			//ub256\n";

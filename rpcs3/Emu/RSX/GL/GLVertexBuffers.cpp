@@ -403,7 +403,6 @@ namespace
 				const u32 data_base = std::get<1>(m_interleaved_input) + vertex_size * min_index;
 
 				auto &texture = m_gl_stream_buffer;
-				u32 data_offset = 0;
 
 				if (auto uploaded = m_vertex_cache->find_vertex_range(data_base, GL_R8UI, data_size))
 				{

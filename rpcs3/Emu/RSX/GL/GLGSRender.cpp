@@ -986,6 +986,7 @@ bool GLGSRender::load_program()
 
 				u32 offset;
 				u32 mask = swap_mask;
+				s32 size = (s32)info.size();
 
 				if (stride == 0 && min_address != 0)
 					stride = info.stride();
@@ -994,31 +995,26 @@ bool GLGSRender::load_program()
 				{
 					offset = current_offset;
 					current_offset += rsx::get_vertex_type_size_on_host(info.type(), info.size());
-
-					switch (info.type())
-					{
-					case rsx::vertex_base_type::ub:
-					case rsx::vertex_base_type::ub256:
-						mask = 1 << 16;	//Reverse byte order
-						break;
-					}
 				}
 				else
 				{
 					offset = (info.offset() & 0x7fffffff) - min_address;
+				}
 
-					switch (info.type())
-					{
-					case rsx::vertex_base_type::ub:
-					case rsx::vertex_base_type::ub256:
-						mask = 0;	//Do not reverse byte order
-						break;
-					}
+				switch (info.type())
+				{
+				case rsx::vertex_base_type::ub:
+				case rsx::vertex_base_type::ub256:
+					mask = is_inline_array? (1 << 16) : 0;	//Reverse byte order for inlined array
+					break;
+				case rsx::vertex_base_type::cmp:
+					size = 1; //set size to 1 for cmp - all 4 parts are decoded together
+					break;
 				}
 
 				s32 *params = &input_attribs[i * 4];
 				params[0] = (s32)info.type();
-				params[1] = (s32)info.size();
+				params[1] = size;
 				params[2] = (s32)offset;
 				params[3] = (s32)stride | mask;
 			}
