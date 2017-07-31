@@ -1145,9 +1145,9 @@ namespace rsx
 					if (surface_exists)
 					{
 						u32 format = raw_format & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
-						if (format == CELL_GCM_TEXTURE_A8R8G8B8 || format == CELL_GCM_TEXTURE_D8R8G8B8)
+						if (format == CELL_GCM_TEXTURE_A8R8G8B8 || format == CELL_GCM_TEXTURE_D8R8G8B8 || format == CELL_GCM_TEXTURE_A4R4G4B4)
 							result.redirected_textures |= (1 << i);
-						else if (format == CELL_GCM_TEXTURE_DEPTH16 || format == CELL_GCM_TEXTURE_DEPTH24_D8)
+						else if (format == CELL_GCM_TEXTURE_DEPTH16 || format == CELL_GCM_TEXTURE_DEPTH24_D8 || format == CELL_GCM_TEXTURE_DEPTH16_FLOAT)
 							result.shadow_textures |= (1 << i);
 						else
 							LOG_ERROR(RSX, "Depth texture bound to pipeline with unexpected format 0x%X", format);
