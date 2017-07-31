@@ -241,14 +241,15 @@ namespace
 		OS << "	return (v.x | v.y << 8);\n";
 		OS << "}\n\n";
 
-		OS << "int get_s16(ivec2 v, int swap)\n";
+		OS << "int preserve_sign_s16(int bits)\n";
 		OS << "{\n";
-		OS << "	//read 16-bit integer and preserve sign\n";
-		OS << "	int bits = get_bits(v, swap);\n";
+		OS << "	//convert raw 16 bit value into signed 32-bit integer counterpart\n";
 		OS << "	int sign = bits & 0x8000;\n";
 		OS << "	if (sign != 0) return (bits | 0xFFFF0000);\n";
 		OS << "	return bits;\n";
 		OS << "}\n\n";
+
+		OS << "#define get_s16(v, s) preserve_sign_s16(get_bits(v, s))\n\n";
 
 		OS << "vec4 fetch_attribute(attribute_desc desc, int vertex_id, isamplerBuffer input_stream)\n";
 		OS << "{\n";
@@ -299,12 +300,14 @@ namespace
 		OS << "			//cmp\n";
 		OS << "			tmp[0] = texelFetch(input_stream, first_byte++).x;\n";
 		OS << "			tmp[1] = texelFetch(input_stream, first_byte++).x;\n";
-		OS << "			bits = get_bits(tmp.xy, desc.swap_bytes);\n";
-		OS << "			result.x = (bits & 0x7FF);\n";
-		OS << "			result.y = (bits >> 11) & 0x7FF;\n";
-		OS << "			result.z = (bits >> 22) & 0x3FF;\n";
-		OS << "			result.w = 1.f;\n";
-		OS << "			scale = vec4(1023., 1023., 511., 1.);\n";
+		OS << "			tmp[2] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			tmp[3] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			bits = get_bits(tmp, desc.swap_bytes);\n";
+		OS << "			result.x = preserve_sign_s16((bits & 0x7FF) << 5);\n";
+		OS << "			result.y = preserve_sign_s16(((bits >> 11) & 0x7FF) << 5);\n";
+		OS << "			result.z = preserve_sign_s16(((bits >> 22) & 0x3FF) << 6);\n";
+		OS << "			result.w = 1.;\n";
+		OS << "			scale = vec4(32767., 32767., 32767., 1.);\n";
 		OS << "			break;\n";
 		OS << "		case 6:\n";
 		OS << "			//ub256\n";
