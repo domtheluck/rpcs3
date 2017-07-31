@@ -60,8 +60,8 @@ public:
 
 struct push_buffer_vertex_info
 {
-	u8 size;
-	vertex_base_type type;
+	u8 size = 0;
+	vertex_base_type type = vertex_base_type::f;
 
 	u32 vertex_count = 0;
 	u32 attribute_mask = ~0;
@@ -72,6 +72,7 @@ struct push_buffer_vertex_info
 		data.resize(0);
 		attribute_mask = ~0;
 		vertex_count = 0;
+		size = 0;
 	}
 
 	u8 get_vertex_size_in_dwords(vertex_base_type type)
@@ -83,10 +84,10 @@ struct push_buffer_vertex_info
 		{
 		case vertex_base_type::f:
 			return size;
-		case vertex_base_type::s1:
 		case vertex_base_type::ub:
 		case vertex_base_type::ub256:
 			return 1;
+		case vertex_base_type::s1:
 		case vertex_base_type::s32k:
 			return size / 2;
 		default:
@@ -118,11 +119,11 @@ struct push_buffer_vertex_info
 		case vertex_base_type::f:
 			*(u32*)dst = se_storage<u32>::swap(arg);
 			break;
-		case vertex_base_type::s1:
 		case vertex_base_type::ub:
 		case vertex_base_type::ub256:
 			*(u32*)dst = arg;
 			break;
+		case vertex_base_type::s1:
 		case vertex_base_type::s32k:
 			((u16*)dst)[0] = se_storage<u16>::swap((u16)(arg & 0xffff));
 			((u16*)dst)[1] = se_storage<u16>::swap((u16)(arg >> 16));

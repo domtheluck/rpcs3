@@ -998,9 +998,14 @@ namespace rsx
 		for (u8 index = 0; index < rsx::limits::vertex_count; ++index)
 		{
 			const bool enabled = !!(input_mask & (1 << index));
+			if (!enabled)
+				continue;
 
 			if (vertex_push_buffers[index].size > 0)
+			{
+				//TODO
 				return std::make_tuple(false, 0, 0, 0);
+			}
 
 			//Check for interleaving
 			auto &info = state.vertex_arrays_info[index];
@@ -1022,18 +1027,21 @@ namespace rsx
 				else
 				{
 					if (stride != info.stride())
+						//LOG_ERROR(RSX, "Stride mismatch %d vs %d", stride, info.stride());
 						return std::make_tuple(false, 0, 0, 0);
 
 					if (base_address > min_address)
 					{
 						const u32 diff = base_address - min_address;
 						if (diff > info.stride())
+							//LOG_ERROR(RSX, "Different streams, base=0x%X, current=0x%X, stride=%d", base_address, min_address, stride);
 							return std::make_tuple(false, 0, 0, 0);
 					}
 					else
 					{
 						const u32 diff = min_address - base_address;
 						if (diff > info.stride())
+							//LOG_ERROR(RSX, "Different streams, base=0x%X, current=0x%X, stride=%d", base_address, min_address, stride);
 							return std::make_tuple(false, 0, 0, 0);
 
 						min_address = base_address;

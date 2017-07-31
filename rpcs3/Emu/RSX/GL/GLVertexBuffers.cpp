@@ -407,7 +407,7 @@ namespace
 
 				if (auto uploaded = m_vertex_cache->find_vertex_range(data_base, GL_R8UI, data_size))
 				{
-					data_offset = uploaded->offset_in_heap;
+					texture->copy_from(m_attrib_ring_buffer, GL_R8UI, uploaded->offset_in_heap, data_size);
 				}
 				else
 				{
@@ -415,7 +415,10 @@ namespace
 					auto mapping = m_attrib_ring_buffer.alloc_from_heap(data_size, m_min_texbuffer_alignment);
 					std::memcpy(mapping.first, vm::base(data_base), data_size);
 					texture->copy_from(m_attrib_ring_buffer, GL_R8UI, mapping.second, data_size);
+					m_vertex_cache->store_range(data_base, GL_R8UI, data_size, mapping.second);
 				}
+
+				return;
 			}
 
 			vertex_buffer_visitor visitor(verts_allocated, m_attrib_ring_buffer,

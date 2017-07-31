@@ -238,7 +238,8 @@ namespace
 
 		OS << "vec4 fetch_attribute(attribute_desc desc, int vertex_id)\n";
 		OS << "{\n";
-		OS << "	vec4 result = vec4(0., 0., 0., 1.);\n";
+		OS << "	vec4 result = vec4(1.);\n";
+		OS << "	vec4 scale = vec4(1.);\n";
 		OS << "	ivec4 tmp;\n";
 		OS << "	int bits;\n";
 		OS << "	bool reverse_order = false;\n";
@@ -249,9 +250,11 @@ namespace
 		OS << "		switch (desc.type)\n";
 		OS << "		{\n";
 		OS << "		case 0:\n";
-		OS << "			//signed byte\n";
-		OS << "			result[n] = float(texelFetch(input_stream, first_byte++).x);\n";
-		OS << "			reverse_order = (desc.swap_bytes != 0);\n";
+		OS << "			//signed normalized 16-bit\n";
+		OS << "			tmp[0] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			tmp[1] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			result[n] = get_bits(tmp.xy, desc.swap_bytes);\n";
+		OS << "			scale[n] = 32767.;\n";
 		OS << "			break;\n";
 		OS << "		case 1:\n";
 		OS << "			//float\n";
@@ -273,12 +276,10 @@ namespace
 		OS << "			reverse_order = (desc.swap_bytes != 0);\n";
 		OS << "			break;\n";
 		OS << "		case 4:\n";
-		OS << "			//signed dword\n";
+		OS << "			//signed word\n";
 		OS << "			tmp[0] = texelFetch(input_stream, first_byte++).x;\n";
 		OS << "			tmp[1] = texelFetch(input_stream, first_byte++).x;\n";
-		OS << "			tmp[2] = texelFetch(input_stream, first_byte++).x;\n";
-		OS << "			tmp[3] = texelFetch(input_stream, first_byte++).x;\n";
-		OS << "			result[n] = get_bits(tmp, desc.swap_bytes);\n";
+		OS << "			result[n] = get_bits(tmp.xy, desc.swap_bytes);\n";
 		OS << "			break;\n";
 		OS << "		case 5:\n";
 		OS << "			//cmp\n";
@@ -290,6 +291,7 @@ namespace
 		OS << "			break;\n";
 		OS << "		}\n";
 		OS << "	}\n\n";
+		OS << "	result /= scale;\n";
 		OS << "	return (reverse_order)? result.wzyx: result;\n";
 		OS << "}\n\n";
 
@@ -334,7 +336,11 @@ namespace
 			}
 
 			OS << "	vec4 " << PI.name << " = read_location(" << locations[PI.name] << ", " << vertex_id << ");\n";
+			return;
 		}
+
+		LOG_WARNING(RSX, "Vertex input %s does not have a matching vertex_input declaration", PI.name.c_str());
+		OS << "	vec4 " << PI.name << "= vec4(0.);\n";
 	}
 
 	void add_input(std::stringstream & OS, const ParamItem &PI, const std::vector<rsx_vertex_input> &inputs)
@@ -380,7 +386,6 @@ namespace
 		}
 
 		LOG_WARNING(RSX, "Vertex input %s does not have a matching vertex_input declaration", PI.name.c_str());
-
 		OS << "	vec4 " << PI.name << "= texelFetch(" << PI.name << "_buffer, gl_VertexID);\n";
 	}
 }

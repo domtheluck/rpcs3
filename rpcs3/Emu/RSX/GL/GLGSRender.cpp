@@ -997,7 +997,6 @@ bool GLGSRender::load_program()
 
 					switch (info.type())
 					{
-					case rsx::vertex_base_type::s1:
 					case rsx::vertex_base_type::ub:
 					case rsx::vertex_base_type::ub256:
 						mask = 1 << 16;	//Reverse byte order
@@ -1007,6 +1006,14 @@ bool GLGSRender::load_program()
 				else
 				{
 					offset = (info.offset() & 0x7fffffff) - min_address;
+
+					switch (info.type())
+					{
+					case rsx::vertex_base_type::ub:
+					case rsx::vertex_base_type::ub256:
+						mask = 0;	//Do not reverse byte order
+						break;
+					}
 				}
 
 				s32 *params = &input_attribs[i * 4];
