@@ -626,6 +626,13 @@ void GLGSRender::on_init_thread()
 		tex.bind();
 	}
 
+	auto &tex = m_gl_attrib_buffers[16];	//spare buffer
+	tex.create();
+	tex.set_target(gl::texture::target::textureBuffer);
+
+	glActiveTexture(GL_TEXTURE0 + 37);
+	tex.bind();
+
 	if (!gl_caps.ARB_buffer_storage_supported)
 	{
 		LOG_WARNING(RSX, "Forcing use of legacy OpenGL buffers because ARB_buffer_storage is not supported");
@@ -888,6 +895,10 @@ bool GLGSRender::load_program()
 
 	RSXVertexProgram vertex_program = get_current_vertex_program();
 
+	auto interleave_info = analyse_inputs_interleaved();
+	vertex_layout_interleaved = std::make_tuple(std::get<0>(interleave_info), std::get<2>(interleave_info), std::get<3>(interleave_info));
+	vertex_program.interleaved_input = std::get<0>(vertex_layout_interleaved);
+	
 	u32 unnormalized_rtts = 0;
 
 	for (auto &vtx : vertex_program.rsx_vertex_inputs)
@@ -910,6 +921,9 @@ bool GLGSRender::load_program()
 	u32 scale_offset_offset;
 	u32 vertex_constants_offset;
 	u32 fragment_constants_offset;
+
+	if (vertex_program.interleaved_input)
+		m_transform_constants_dirty = true;
 
 	const u32 fragment_constants_size = (const u32)m_prog_buffer.get_fragment_constants_buffer_size(fragment_program);
 	const u32 fragment_buffer_size = fragment_constants_size + (17 * 4 * sizeof(float));
@@ -936,6 +950,72 @@ bool GLGSRender::load_program()
 		vertex_constants_offset = mapping.second;
 		fill_vertex_program_constants_data(buf);
 		*(reinterpret_cast<u32*>(buf + (468 * 4 * sizeof(float)))) = rsx::method_registers.transform_branch_bits();
+
+		if (vertex_program.interleaved_input)
+		{
+			//TODO: Fill vertex attribute state
+			s32 *input_attribs = (s32*)(buf + 469 * 4 * sizeof(float));
+			const u32 min_address = std::get<1>(interleave_info);
+
+			bool is_inline_array = false;
+			u32 stride = 0;
+			u32 swap_mask = 1 << 16;
+
+			if (min_address == 0)
+			{
+				//inlined array
+				for (auto &info : rsx::method_registers.vertex_arrays_info)
+				{
+					if (info.size() > 0)
+						stride += rsx::get_vertex_type_size_on_host(info.type(), info.size());
+				}
+
+				//Contents are already LE
+				swap_mask = 0;
+				is_inline_array = true;
+			}
+
+			//For inlined arrays, we have to get the offset as we go
+			u32 current_offset = 0;
+			memset(input_attribs, 0, sizeof(s32) * 4 * 16);
+
+			for (int i = 0; i < rsx::limits::vertex_count; ++i)
+			{
+				auto &info = rsx::method_registers.vertex_arrays_info[i];
+				if (!info.size()) continue;
+
+				u32 offset;
+				u32 mask = swap_mask;
+
+				if (stride == 0 && min_address != 0)
+					stride = info.stride();
+
+				if (is_inline_array)
+				{
+					offset = current_offset;
+					current_offset += rsx::get_vertex_type_size_on_host(info.type(), info.size());
+
+					switch (info.type())
+					{
+					case rsx::vertex_base_type::s1:
+					case rsx::vertex_base_type::ub:
+					case rsx::vertex_base_type::ub256:
+						mask = 1 << 16;	//Reverse byte order
+						break;
+					}
+				}
+				else
+				{
+					offset = (info.offset() & 0x7fffffff) - min_address;
+				}
+
+				s32 *params = &input_attribs[i * 4];
+				params[0] = (s32)info.type();
+				params[1] = (s32)info.size();
+				params[2] = (s32)offset;
+				params[3] = (s32)stride | mask;
+			}
+		}
 	}
 
 	// Fragment constants
@@ -1031,7 +1111,7 @@ void GLGSRender::flip(int buffer)
 		__glcheck m_flip_fbo.read_buffer(m_flip_fbo.color);
 
 	}
-	else
+	else if (0)
 	{
 		LOG_WARNING(RSX, "Flip texture was not found in cache. Uploading surface from CPU");
 

@@ -73,6 +73,12 @@ struct GLTraits
 				result.uniforms[location] = (i + rsx::limits::fragment_textures_count + rsx::limits::vertex_textures_count);
 		}
 
+		if (vertexProgramData.interleaved)
+		{
+			//Bind a texure attribute for location 0 at TEXTID 37
+			result.uniforms[0] = 37;
+		}
+
 		LOG_NOTICE(RSX, "*** prog id = %d", result.id());
 		LOG_NOTICE(RSX, "*** vp id = %d", vertexProgramData.id);
 		LOG_NOTICE(RSX, "*** fp id = %d", fragmentProgramData.id);

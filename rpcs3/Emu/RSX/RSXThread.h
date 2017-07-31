@@ -161,6 +161,7 @@ namespace rsx
 	protected:
 		std::array<u32, 4> get_color_surface_addresses() const;
 		u32 get_zeta_surface_address() const;
+		std::tuple<bool, u32, u32, u8> analyse_inputs_interleaved() const;
 		RSXVertexProgram get_current_vertex_program() const;
 
 		/**

@@ -26,6 +26,8 @@ bool vertex_program_compare::operator()(const RSXVertexProgram &binary1, const R
 {
 	if (binary1.output_mask != binary2.output_mask)
 		return false;
+	if (binary1.interleaved_input != binary2.interleaved_input)
+		return false;
 	if (binary1.data.size() != binary2.data.size())
 		return false;
 	if (binary1.rsx_vertex_inputs != binary2.rsx_vertex_inputs)

@@ -41,6 +41,8 @@ void GLVertexDecompilerThread::insertHeader(std::stringstream &OS)
 
 void GLVertexDecompilerThread::insertInputs(std::stringstream & OS, const std::vector<ParamType>& inputs)
 {
+	OS << "layout (location=0) uniform isamplerBuffer input_stream;\n";
+
 	std::vector<std::tuple<size_t, std::string>> input_data;
 	for (const ParamType &PT : inputs)
 	{
@@ -76,6 +78,9 @@ void GLVertexDecompilerThread::insertInputs(std::stringstream & OS, const std::v
 						}
 					}
 
+					//store location index
+					input_locations[PI.name] = PI.location;
+
 					std::string samplerType = is_int ? "isamplerBuffer" : "samplerBuffer";
 					OS << "layout(location=" << location++ << ")" << "	uniform " << samplerType << " " << PI.name << "_buffer;\n";
 				}
@@ -90,6 +95,7 @@ void GLVertexDecompilerThread::insertConstants(std::stringstream & OS, const std
 	OS << "{\n";
 	OS << "	vec4 vc[468];\n";
 	OS << "	uint transform_branch_bits;\n";
+	OS << "	ivec4 input_attributes[16];\n";
 	OS << "};\n\n";
 
 	for (const ParamType &PT: constants)
@@ -206,6 +212,131 @@ namespace
 		}
 	}
 
+	void insert_vertex_input_fetch(std::stringstream& OS)
+	{
+		//Actually decode a vertex attribute from a raw byte stream
+		OS << "struct attribute_desc\n";
+		OS << "{\n";
+		OS << "	int type;\n";
+		OS << "	int attribute_size;\n";
+		OS << "	int starting_offset;\n";
+		OS << "	int stride;\n";
+		OS << "	int swap_bytes;\n";
+		OS << "};\n\n";
+
+		OS << "int get_bits(ivec4 v, int swap)\n";
+		OS << "{\n";
+		OS << "	if (swap) return (v.w | v.z << 8 | v.y << 16 | v.x << 24);\n";
+		OS << "	return (v.x | v.y << 8 | v.z << 16 | v.w << 24);\n";
+		OS << "}\n\n";
+
+		OS << "int get_bits(ivec2 v, int swap)\n";
+		OS << "{\n";
+		OS << "	if (swap) return (v.y | v.x << 8);\n";
+		OS << "	return (v.x | v.y << 8);\n";
+		OS << "}\n\n";
+
+		OS << "vec4 fetch_attribute(attribute_desc desc, int vertex_id)\n";
+		OS << "{\n";
+		OS << "	vec4 result = vec4(0., 0., 0., 1.);\n";
+		OS << "	ivec4 tmp;\n";
+		OS << "	int bits;\n";
+		OS << "	bool reverse_order = false;\n";
+		OS << "\n";
+		OS << "	int first_byte = (vertex_id * desc.stride) + desc.starting_offset;\n";
+		OS << "	for (int n = 0; n < desc.attribute_size; n++)\n";
+		OS << "	{\n";
+		OS << "		switch (desc.type)\n";
+		OS << "		{\n";
+		OS << "		case 0:\n";
+		OS << "			//signed byte\n";
+		OS << "			result[n] = float(texelFetch(input_stream, first_byte++).x);\n";
+		OS << "			reverse_order = (desc.swap_bytes != 0);\n";
+		OS << "			break;\n";
+		OS << "		case 1:\n";
+		OS << "			//float\n";
+		OS << "			tmp[0] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			tmp[1] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			tmp[2] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			tmp[3] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			result[n] = intBitsToFloat(get_bits(tmp, desc.swap_bytes));\n";
+		OS << "			break;\n";
+		OS << "		case 2:\n";
+		OS << "			//half\n";
+		OS << "			tmp[0] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			tmp[1] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			result[n] = unpackHalf2x16(uint(get_bits(tmp.xy, desc.swap_bytes))).x;\n";
+		OS << "			break;\n";
+		OS << "		case 3:\n";
+		OS << "			//unsigned byte\n";
+		OS << "			result[n] = texelFetch(input_stream, first_byte++).x / 255.;\n";
+		OS << "			reverse_order = (desc.swap_bytes != 0);\n";
+		OS << "			break;\n";
+		OS << "		case 4:\n";
+		OS << "			//signed dword\n";
+		OS << "			tmp[0] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			tmp[1] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			tmp[2] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			tmp[3] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			result[n] = get_bits(tmp, desc.swap_bytes);\n";
+		OS << "			break;\n";
+		OS << "		case 5:\n";
+		OS << "			//cmp\n";
+		OS << "			break;\n";
+		OS << "		case 6:\n";
+		OS << "			//ub256\n";
+		OS << "			result[n] = float(texelFetch(input_stream, first_byte++).x);\n";
+		OS << "			reverse_order = (desc.swap_bytes != 0);\n";
+		OS << "			break;\n";
+		OS << "		}\n";
+		OS << "	}\n\n";
+		OS << "	return (reverse_order)? result.wzyx: result;\n";
+		OS << "}\n\n";
+
+		OS << "attribute_desc fetch_desc(int location)\n";
+		OS << "{\n";
+		OS << "	attribute_desc result;\n";
+		OS << "	result.type = input_attributes[location].x;\n";
+		OS << "	result.attribute_size = input_attributes[location].y;\n";
+		OS << "	result.starting_offset = input_attributes[location].z;\n";
+		OS << "	result.stride = input_attributes[location].w & 0xFF;\n";
+		OS << "	result.swap_bytes = (input_attributes[location].w >> 16) & 0xFF;\n";
+		OS << "	return result;\n";
+		OS << "}\n\n";
+
+		OS << "vec4 read_location(int location, int vertex_id)\n";
+		OS << "{\n";
+		OS << "	attribute_desc desc = fetch_desc(location);\n";
+		OS << "	return fetch_attribute(desc, vertex_id);\n";
+		OS << "}\n\n";
+	}
+
+	void add_input_interleaved(std::stringstream& OS, const ParamItem &PI, const std::vector<rsx_vertex_input> &inputs, std::unordered_map<std::string, int>& locations)
+	{
+		for (const auto &real_input : inputs)
+		{
+			if (real_input.location != PI.location)
+				continue;
+
+			//Get vertex index
+			std::string vertex_id = "gl_VertexID";
+
+			if (!real_input.is_array)
+				vertex_id = "0";
+			else if (real_input.frequency > 1)
+			{
+				std::string divisor = std::to_string(real_input.frequency);
+
+				if (real_input.is_modulo)
+					vertex_id = "gl_VertexID % " + divisor;
+				else
+					vertex_id = "gl_VertexID / " + divisor;
+			}
+
+			OS << "	vec4 " << PI.name << " = read_location(" << locations[PI.name] << ", " << vertex_id << ");\n";
+		}
+	}
+
 	void add_input(std::stringstream & OS, const ParamItem &PI, const std::vector<rsx_vertex_input> &inputs)
 	{
 		for (const auto &real_input : inputs)
@@ -258,6 +389,9 @@ void GLVertexDecompilerThread::insertMainStart(std::stringstream & OS)
 {
 	insert_glsl_legacy_function(OS, gl::glsl::glsl_vertex_program);
 
+	if (rsx_vertex_program.interleaved_input)
+		insert_vertex_input_fetch(OS);
+
 	std::string parameters = "";
 	for (int i = 0; i < 16; ++i)
 	{
@@ -293,7 +427,13 @@ void GLVertexDecompilerThread::insertMainStart(std::stringstream & OS)
 	for (const ParamType &PT : m_parr.params[PF_PARAM_IN])
 	{
 		for (const ParamItem &PI : PT.items)
-			add_input(OS, PI, rsx_vertex_program.rsx_vertex_inputs);
+		{
+			//TODO: Ability to interleave groups of inputs
+			if (rsx_vertex_program.interleaved_input)
+				add_input_interleaved(OS, PI, rsx_vertex_program.rsx_vertex_inputs, input_locations);
+			else
+				add_input(OS, PI, rsx_vertex_program.rsx_vertex_inputs);
+		}
 	}
 
 	for (const ParamType &PT : m_parr.params[PF_PARAM_UNIFORM])
@@ -438,6 +578,8 @@ void GLVertexProgram::Decompile(const RSXVertexProgram& prog)
 {
 	GLVertexDecompilerThread decompiler(prog, shader, parr);
 	decompiler.Task();
+
+	interleaved = prog.interleaved_input;
 }
 
 void GLVertexProgram::Compile()

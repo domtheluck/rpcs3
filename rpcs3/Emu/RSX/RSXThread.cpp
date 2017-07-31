@@ -983,6 +983,74 @@ namespace rsx
 		return result;
 	}
 
+	std::tuple<bool, u32, u32, u8> thread::analyse_inputs_interleaved() const
+	{
+		const rsx_state& state = rsx::method_registers;
+		const u32 input_mask = state.vertex_attrib_input_mask();
+
+		if (state.current_draw_clause.command == rsx::draw_command::inlined_array)
+			return std::make_tuple(true, 0, 0, 0);
+
+		u32 min_address = 0;
+		u8 stride = 0;
+		u32 location = CELL_GCM_LOCATION_MAIN;
+
+		for (u8 index = 0; index < rsx::limits::vertex_count; ++index)
+		{
+			const bool enabled = !!(input_mask & (1 << index));
+
+			if (vertex_push_buffers[index].size > 0)
+				return std::make_tuple(false, 0, 0, 0);
+
+			//Check for interleaving
+			auto &info = state.vertex_arrays_info[index];
+			if (info.size() == 0 && state.register_vertex_info[index].size > 0)
+			{
+				//TODO
+				return std::make_tuple(false, 0, 0, 0);
+			}
+
+			if (info.size() > 0)
+			{
+				const u32 base_address = info.offset() & 0x7fffffff;
+				if (min_address == 0)
+				{
+					min_address = base_address;
+					stride = info.stride();
+					location = info.offset() >> 31;
+				}
+				else
+				{
+					if (stride != info.stride())
+						return std::make_tuple(false, 0, 0, 0);
+
+					if (base_address > min_address)
+					{
+						const u32 diff = base_address - min_address;
+						if (diff > info.stride())
+							return std::make_tuple(false, 0, 0, 0);
+					}
+					else
+					{
+						const u32 diff = min_address - base_address;
+						if (diff > info.stride())
+							return std::make_tuple(false, 0, 0, 0);
+
+						min_address = base_address;
+					}
+				}
+			}
+		}
+
+		bool interleaved = min_address != 0;
+		u32  real_min_address = 0;
+		
+		if (interleaved)
+			real_min_address = state.vertex_data_base_offset() + rsx::get_address(min_address, location);
+
+		return std::make_tuple(interleaved, min_address, real_min_address, stride);
+	}
+
 	RSXFragmentProgram thread::get_current_fragment_program(std::function<std::tuple<bool, u16>(u32, fragment_texture&, bool)> get_surface_info) const
 	{
 		RSXFragmentProgram result = {};
