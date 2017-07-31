@@ -707,7 +707,7 @@ void GLGSRender::on_init_thread()
 
 void GLGSRender::on_exit()
 {
-	glDisable(GL_VERTEX_PROGRAM_POINT_SIZE);
+	glFinish();
 
 	m_prog_buffer.clear();
 
@@ -1114,7 +1114,7 @@ void GLGSRender::flip(int buffer)
 		__glcheck m_flip_fbo.read_buffer(m_flip_fbo.color);
 
 	}
-	else if (0)
+	else
 	{
 		LOG_WARNING(RSX, "Flip texture was not found in cache. Uploading surface from CPU");
 

@@ -236,6 +236,15 @@ namespace
 		OS << "	return (v.x | v.y << 8);\n";
 		OS << "}\n\n";
 
+		OS << "int get_s16(ivec2 v, int swap)\n";
+		OS << "{\n";
+		OS << "	//read 16-bit integer and preserve sign\n";
+		OS << "	int bits = get_bits(v, swap);\n";
+		OS << "	int sign = bits & 0x8000;\n";
+		OS << "	if (sign) return (bits | 0xFFFF0000);\n";
+		OS << "	return bits;\n";
+		OS << "}\n\n";
+
 		OS << "vec4 fetch_attribute(attribute_desc desc, int vertex_id)\n";
 		OS << "{\n";
 		OS << "	vec4 result = vec4(0., 0., 0., 1.);\n";
@@ -253,7 +262,7 @@ namespace
 		OS << "			//signed normalized 16-bit\n";
 		OS << "			tmp[0] = texelFetch(input_stream, first_byte++).x;\n";
 		OS << "			tmp[1] = texelFetch(input_stream, first_byte++).x;\n";
-		OS << "			result[n] = get_bits(tmp.xy, desc.swap_bytes);\n";
+		OS << "			result[n] = get_s16(tmp.xy, desc.swap_bytes);\n";
 		OS << "			scale[n] = 32767.;\n";
 		OS << "			break;\n";
 		OS << "		case 1:\n";
@@ -279,7 +288,7 @@ namespace
 		OS << "			//signed word\n";
 		OS << "			tmp[0] = texelFetch(input_stream, first_byte++).x;\n";
 		OS << "			tmp[1] = texelFetch(input_stream, first_byte++).x;\n";
-		OS << "			result[n] = get_bits(tmp.xy, desc.swap_bytes);\n";
+		OS << "			result[n] = get_s16(tmp.xy, desc.swap_bytes);\n";
 		OS << "			break;\n";
 		OS << "		case 5:\n";
 		OS << "			//cmp\n";
