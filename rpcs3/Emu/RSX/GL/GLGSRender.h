@@ -50,7 +50,8 @@ private:
 
 	gl::texture_cache m_gl_texture_cache;
 
-	gl::texture m_gl_attrib_buffers[rsx::limits::vertex_count + 1];
+	gl::texture m_gl_attrib_buffers[rsx::limits::vertex_count];
+	gl::texture m_gl_array_stream_buffer;
 
 	std::unique_ptr<gl::ring_buffer> m_attrib_ring_buffer;
 	std::unique_ptr<gl::ring_buffer> m_fragment_constants_buffer;
@@ -382,7 +383,7 @@ private:
 
 	// Return element to draw and in case of indexed draw index type and offset in index buffer
 	std::tuple<u32, std::optional<std::tuple<GLenum, u32> > > set_vertex_buffer();
-	std::tuple<bool, u32, u8> vertex_layout_interleaved = {};
+	rsx::vertex_input_layout vertex_layout_interleaved = {};
 
 	void clear_surface(u32 arg);
 

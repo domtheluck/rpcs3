@@ -2538,7 +2538,7 @@ namespace gl
 						error_msg = buf.get();
 					}
 
-					throw validation_exception(error_msg);
+					LOG_ERROR(RSX, "Validation failed: %s", error_msg.c_str());
 				}
 			}
 

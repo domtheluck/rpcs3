@@ -105,6 +105,21 @@ namespace rsx
 		std::vector<u32> inline_vertex_array;
 	};
 
+	struct interleaved_range_info
+	{
+		bool interleaved = false;
+		u32  base_offset = 0;
+		u32  real_offset_address = 0;
+		u8   memory_location = 0;
+		u8   attribute_stride = 0;
+	};
+
+	struct vertex_input_layout
+	{
+		std::vector<interleaved_range_info> interleaved_blocks; //Interleaved blocks to be uploaded as-is
+		u8 referenced_registers; //Set if the inputs reference any static registers
+	};
+
 	class thread : public named_thread
 	{
 		std::shared_ptr<thread_ctrl> m_vblank_thread;
@@ -161,7 +176,7 @@ namespace rsx
 	protected:
 		std::array<u32, 4> get_color_surface_addresses() const;
 		u32 get_zeta_surface_address() const;
-		std::tuple<bool, u32, u32, u8> analyse_inputs_interleaved() const;
+		vertex_input_layout analyse_inputs_interleaved() const;
 		RSXVertexProgram get_current_vertex_program() const;
 
 		/**

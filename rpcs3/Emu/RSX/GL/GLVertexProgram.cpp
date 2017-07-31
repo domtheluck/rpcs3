@@ -41,7 +41,11 @@ void GLVertexDecompilerThread::insertHeader(std::stringstream &OS)
 
 void GLVertexDecompilerThread::insertInputs(std::stringstream & OS, const std::vector<ParamType>& inputs)
 {
-	OS << "layout (location=0) uniform isamplerBuffer input_stream;\n";
+	if (rsx_vertex_program.interleaved_input)
+	{
+		OS << "layout(location=0) uniform isamplerBuffer input_attribute_stream;\n";
+		OS << "layout(location=1) uniform isamplerBuffer input_register_stream;\n";
+	}
 
 	std::vector<std::tuple<size_t, std::string>> input_data;
 	for (const ParamType &PT : inputs)
@@ -59,7 +63,7 @@ void GLVertexDecompilerThread::insertInputs(std::stringstream & OS, const std::v
 
 	std::sort(input_data.begin(), input_data.end());
 
-	int location = 1;
+	int location = 2;
 	for (const std::tuple<size_t, std::string>& item : input_data)
 	{
 		for (const ParamType &PT : inputs)
@@ -222,17 +226,18 @@ namespace
 		OS << "	int starting_offset;\n";
 		OS << "	int stride;\n";
 		OS << "	int swap_bytes;\n";
+		OS << "	int is_register;\n";
 		OS << "};\n\n";
 
 		OS << "int get_bits(ivec4 v, int swap)\n";
 		OS << "{\n";
-		OS << "	if (swap) return (v.w | v.z << 8 | v.y << 16 | v.x << 24);\n";
+		OS << "	if (swap != 0) return (v.w | v.z << 8 | v.y << 16 | v.x << 24);\n";
 		OS << "	return (v.x | v.y << 8 | v.z << 16 | v.w << 24);\n";
 		OS << "}\n\n";
 
 		OS << "int get_bits(ivec2 v, int swap)\n";
 		OS << "{\n";
-		OS << "	if (swap) return (v.y | v.x << 8);\n";
+		OS << "	if (swap != 0) return (v.y | v.x << 8);\n";
 		OS << "	return (v.x | v.y << 8);\n";
 		OS << "}\n\n";
 
@@ -241,11 +246,11 @@ namespace
 		OS << "	//read 16-bit integer and preserve sign\n";
 		OS << "	int bits = get_bits(v, swap);\n";
 		OS << "	int sign = bits & 0x8000;\n";
-		OS << "	if (sign) return (bits | 0xFFFF0000);\n";
+		OS << "	if (sign != 0) return (bits | 0xFFFF0000);\n";
 		OS << "	return bits;\n";
 		OS << "}\n\n";
 
-		OS << "vec4 fetch_attribute(attribute_desc desc, int vertex_id)\n";
+		OS << "vec4 fetch_attribute(attribute_desc desc, int vertex_id, isamplerBuffer input_stream)\n";
 		OS << "{\n";
 		OS << "	vec4 result = vec4(0., 0., 0., 1.);\n";
 		OS << "	vec4 scale = vec4(1.);\n";
@@ -319,23 +324,30 @@ namespace
 		OS << "	result.attribute_size = input_attributes[location].y;\n";
 		OS << "	result.starting_offset = input_attributes[location].z;\n";
 		OS << "	result.stride = input_attributes[location].w & 0xFF;\n";
-		OS << "	result.swap_bytes = (input_attributes[location].w >> 16) & 0xFF;\n";
+		OS << "	result.swap_bytes = (input_attributes[location].w >> 16) & 0x1;\n";
+		OS << "	result.is_register = (input_attributes[location].w >> 17) & 0x1;\n";
 		OS << "	return result;\n";
 		OS << "}\n\n";
 
 		OS << "vec4 read_location(int location, int vertex_id)\n";
 		OS << "{\n";
 		OS << "	attribute_desc desc = fetch_desc(location);\n";
-		OS << "	return fetch_attribute(desc, vertex_id);\n";
+		OS << "	if (desc.is_register != 0)\n";
+		OS << "		return fetch_attribute(desc, vertex_id, input_register_stream);\n";
+		OS << "	else\n";
+		OS << "		return fetch_attribute(desc, vertex_id, input_attribute_stream);\n";
 		OS << "}\n\n";
 	}
 
-	void add_input_interleaved(std::stringstream& OS, const ParamItem &PI, const std::vector<rsx_vertex_input> &inputs, std::unordered_map<std::string, int>& locations)
+	void add_input_interleaved(std::stringstream& OS, const ParamItem &PI, const std::vector<rsx_vertex_input> &inputs, std::unordered_map<std::string, int>& locations, bool arrays_only)
 	{
 		for (const auto &real_input : inputs)
 		{
 			if (real_input.location != PI.location)
 				continue;
+
+			if (arrays_only && !real_input.is_array)
+				return;
 
 			//Get vertex index
 			std::string vertex_id = "gl_VertexID";
@@ -360,12 +372,15 @@ namespace
 		OS << "	vec4 " << PI.name << "= vec4(0.);\n";
 	}
 
-	void add_input(std::stringstream & OS, const ParamItem &PI, const std::vector<rsx_vertex_input> &inputs)
+	void add_input(std::stringstream & OS, const ParamItem &PI, const std::vector<rsx_vertex_input> &inputs, bool skip_arrays)
 	{
 		for (const auto &real_input : inputs)
 		{
 			if (real_input.location != PI.location)
 				continue;
+
+			if (real_input.is_array && skip_arrays)
+				return;
 
 			std::string vecType = "	vec4 ";
 			if (real_input.int_type)
@@ -452,9 +467,12 @@ void GLVertexDecompilerThread::insertMainStart(std::stringstream & OS)
 		{
 			//TODO: Ability to interleave groups of inputs
 			if (rsx_vertex_program.interleaved_input)
-				add_input_interleaved(OS, PI, rsx_vertex_program.rsx_vertex_inputs, input_locations);
+			{
+				add_input_interleaved(OS, PI, rsx_vertex_program.rsx_vertex_inputs, input_locations, true);
+				add_input(OS, PI, rsx_vertex_program.rsx_vertex_inputs, true);
+			}
 			else
-				add_input(OS, PI, rsx_vertex_program.rsx_vertex_inputs);
+				add_input(OS, PI, rsx_vertex_program.rsx_vertex_inputs, false);
 		}
 	}
 

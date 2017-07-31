@@ -626,10 +626,10 @@ void GLGSRender::on_init_thread()
 		tex.bind();
 	}
 
-	auto &tex = m_gl_attrib_buffers[16];	//spare buffer
+	//Array stream buffer
+	auto &tex = m_gl_array_stream_buffer;
 	tex.create();
 	tex.set_target(gl::texture::target::textureBuffer);
-
 	glActiveTexture(GL_TEXTURE0 + 37);
 	tex.bind();
 
@@ -735,6 +735,8 @@ void GLGSRender::on_exit()
 	{
 		tex.remove();
 	}
+
+	m_gl_array_stream_buffer.remove();
 
 	for (auto &sampler : m_gl_sampler_states)
 	{
@@ -895,9 +897,8 @@ bool GLGSRender::load_program()
 
 	RSXVertexProgram vertex_program = get_current_vertex_program();
 
-	auto interleave_info = analyse_inputs_interleaved();
-	vertex_layout_interleaved = std::make_tuple(std::get<0>(interleave_info), std::get<2>(interleave_info), std::get<3>(interleave_info));
-	vertex_program.interleaved_input = std::get<0>(vertex_layout_interleaved);
+	vertex_layout_interleaved = analyse_inputs_interleaved();
+	vertex_program.interleaved_input = vertex_layout_interleaved.interleaved_blocks[0].interleaved;
 	
 	u32 unnormalized_rtts = 0;
 
@@ -953,9 +954,9 @@ bool GLGSRender::load_program()
 
 		if (vertex_program.interleaved_input)
 		{
-			//TODO: Fill vertex attribute state
+			//Fill vertex attribute state
 			s32 *input_attribs = (s32*)(buf + 469 * 4 * sizeof(float));
-			const u32 min_address = std::get<1>(interleave_info);
+			const u32 min_address = vertex_layout_interleaved.interleaved_blocks[0].base_offset;
 
 			bool is_inline_array = false;
 			u32 stride = 0;

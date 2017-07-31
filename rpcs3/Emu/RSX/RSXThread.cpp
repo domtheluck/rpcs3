@@ -983,17 +983,26 @@ namespace rsx
 		return result;
 	}
 
-	std::tuple<bool, u32, u32, u8> thread::analyse_inputs_interleaved() const
+	vertex_input_layout thread::analyse_inputs_interleaved() const
 	{
 		const rsx_state& state = rsx::method_registers;
 		const u32 input_mask = state.vertex_attrib_input_mask();
 
 		if (state.current_draw_clause.command == rsx::draw_command::inlined_array)
-			return std::make_tuple(true, 0, 0, 0);
+		{
+			//inlined arrays are always interleaved
+			interleaved_range_info info = {};
+			info.interleaved = true;
 
-		u32 min_address = 0;
-		u8 stride = 0;
-		u32 location = CELL_GCM_LOCATION_MAIN;
+			vertex_input_layout result = {};
+			result.interleaved_blocks.push_back(info);
+			return result;
+		}
+
+		vertex_input_layout result = {};
+		result.interleaved_blocks.push_back({});
+
+		auto &layout_info = result.interleaved_blocks.back();
 
 		for (u8 index = 0; index < rsx::limits::vertex_count; ++index)
 		{
@@ -1003,60 +1012,68 @@ namespace rsx
 
 			if (vertex_push_buffers[index].size > 0)
 			{
-				//TODO
-				return std::make_tuple(false, 0, 0, 0);
+				//TODO: Store the data in interleaved format similar to inlined_array
+				return result;
 			}
 
 			//Check for interleaving
 			auto &info = state.vertex_arrays_info[index];
 			if (info.size() == 0 && state.register_vertex_info[index].size > 0)
 			{
-				//TODO
-				return std::make_tuple(false, 0, 0, 0);
+				result.referenced_registers ++;
+				continue;
 			}
 
 			if (info.size() > 0)
 			{
 				const u32 base_address = info.offset() & 0x7fffffff;
-				if (min_address == 0)
+				if (layout_info.base_offset == 0)
 				{
-					min_address = base_address;
-					stride = info.stride();
-					location = info.offset() >> 31;
+					layout_info.base_offset = base_address;
+					layout_info.attribute_stride = info.stride();
+					layout_info.memory_location = info.offset() >> 31;
 				}
 				else
 				{
-					if (stride != info.stride())
-						//LOG_ERROR(RSX, "Stride mismatch %d vs %d", stride, info.stride());
-						return std::make_tuple(false, 0, 0, 0);
-
-					if (base_address > min_address)
+					if (layout_info.attribute_stride != info.stride())
 					{
-						const u32 diff = base_address - min_address;
+						//TODO: Split into new block
+						return result;
+					}
+
+					if (base_address > layout_info.base_offset)
+					{
+						const u32 diff = base_address - layout_info.base_offset;
 						if (diff > info.stride())
-							//LOG_ERROR(RSX, "Different streams, base=0x%X, current=0x%X, stride=%d", base_address, min_address, stride);
-							return std::make_tuple(false, 0, 0, 0);
+						{
+							//TODO: Split into new block
+							return result;
+						}
 					}
 					else
 					{
-						const u32 diff = min_address - base_address;
+						const u32 diff = layout_info.base_offset - base_address;
 						if (diff > info.stride())
-							//LOG_ERROR(RSX, "Different streams, base=0x%X, current=0x%X, stride=%d", base_address, min_address, stride);
-							return std::make_tuple(false, 0, 0, 0);
+						{
+							//TODO: Split into new block
+							return result;
+						}
 
-						min_address = base_address;
+						layout_info.base_offset = base_address;
 					}
 				}
 			}
 		}
 
-		bool interleaved = min_address != 0;
-		u32  real_min_address = 0;
-		
-		if (interleaved)
-			real_min_address = state.vertex_data_base_offset() + rsx::get_address(min_address, location);
+		for (auto &info : result.interleaved_blocks)
+		{
+			info.interleaved = (info.base_offset != 0);
 
-		return std::make_tuple(interleaved, min_address, real_min_address, stride);
+			if (info.interleaved)
+				info.real_offset_address = state.vertex_data_base_offset() + rsx::get_address(info.base_offset, info.memory_location);
+		}
+
+		return result;
 	}
 
 	RSXFragmentProgram thread::get_current_fragment_program(std::function<std::tuple<bool, u16>(u32, fragment_texture&, bool)> get_surface_info) const

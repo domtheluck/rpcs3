@@ -75,8 +75,9 @@ struct GLTraits
 
 		if (vertexProgramData.interleaved)
 		{
-			//Bind a texure attribute for location 0 at TEXTID 37
+			//Bind a texure attribute for location 0 at TEXTID 37, 1 at 38
 			result.uniforms[0] = 37;
+			result.uniforms[1] = 38;
 		}
 
 		LOG_NOTICE(RSX, "*** prog id = %d", result.id());

@@ -283,7 +283,7 @@ namespace
 
 		draw_command_visitor(gl::ring_buffer& index_ring_buffer, gl::ring_buffer& attrib_ring_buffer,
 		    gl::texture* gl_attrib_buffers, gl::glsl::program* program, GLint min_texbuffer_alignment,
-			gl::vertex_cache* vertex_cache, std::tuple<bool, u32, u8> interleave_info,
+			gl::vertex_cache* vertex_cache, rsx::vertex_input_layout& interleave_info, gl::texture *stream_buffer,
 		    std::function<attribute_storage(rsx::rsx_state, std::vector<std::pair<u32, u32>>)> gvb)
 		    : m_index_ring_buffer(index_ring_buffer)
 		    , m_attrib_ring_buffer(attrib_ring_buffer)
@@ -292,7 +292,8 @@ namespace
 		    , m_min_texbuffer_alignment(min_texbuffer_alignment)
 		    , get_vertex_buffers(gvb)
 			, m_vertex_cache(vertex_cache)
-			, m_interleaved_input(interleave_info)
+			, m_input_layout(interleave_info)
+			, m_gl_stream_buffer(stream_buffer)
 		{
 			for (u8 index = 0; index < rsx::limits::vertex_count; ++index) {
 				if (rsx::method_registers.vertex_arrays_info[index].size() ||
@@ -301,8 +302,6 @@ namespace
 					max_vertex_attrib_size += 16;
 				}
 			}
-
-			m_gl_stream_buffer = &m_gl_attrib_buffers[16];
 		}
 
 		std::tuple<u32, std::optional<std::tuple<GLenum, u32>>> operator()(
@@ -387,7 +386,7 @@ namespace
 		gl::texture* m_gl_stream_buffer;
 		gl::vertex_cache* m_vertex_cache;
 		gl::glsl::program* m_program;
-		std::tuple<bool, u32, u8> m_interleaved_input;
+		rsx::vertex_input_layout& m_input_layout;
 		GLint m_min_texbuffer_alignment;
 		std::function<attribute_storage(rsx::rsx_state, std::vector<std::pair<u32, u32>>)>
 		    get_vertex_buffers;
@@ -396,11 +395,14 @@ namespace
 		{
 			u32 verts_allocated = max_index - min_index + 1;
 
-			if (std::get<0>(m_interleaved_input))
+			rsx::interleaved_range_info &interleave_info = m_input_layout.interleaved_blocks.back();
+			bool registers_only = false;
+
+			if (interleave_info.interleaved)
 			{
-				const u32 vertex_size = std::get<2>(m_interleaved_input);
+				const u32 vertex_size = interleave_info.attribute_stride;
 				const u32 data_size = vertex_size * verts_allocated;
-				const u32 data_base = std::get<1>(m_interleaved_input) + vertex_size * min_index;
+				const u32 data_base = interleave_info.real_offset_address + vertex_size * min_index;
 
 				auto &texture = m_gl_stream_buffer;
 
@@ -417,14 +419,25 @@ namespace
 					m_vertex_cache->store_range(data_base, GL_R8UI, data_size, mapping.second);
 				}
 
-				return;
+				if (!m_input_layout.referenced_registers)
+					return;
+
+				registers_only = true;
 			}
 
 			vertex_buffer_visitor visitor(verts_allocated, m_attrib_ring_buffer,
 			    m_program, m_gl_attrib_buffers, m_min_texbuffer_alignment, m_vertex_cache);
+
 			const auto& vertex_buffers =
 			    get_vertex_buffers(rsx::method_registers, {{min_index, verts_allocated}});
-			for (const auto& vbo : vertex_buffers) std::apply_visitor(visitor, vbo);
+
+			for (const auto& vbo : vertex_buffers)
+			{
+				if (registers_only && vbo.which() != 1)
+					continue;
+
+				std::apply_visitor(visitor, vbo);
+			}
 		}
 
 		u32 upload_inline_array(const u32& max_vertex_attrib_size)
@@ -462,7 +475,7 @@ std::tuple<u32, std::optional<std::tuple<GLenum, u32>>> GLGSRender::set_vertex_b
 	std::chrono::time_point<steady_clock> then = steady_clock::now();
 	auto result = std::apply_visitor(draw_command_visitor(*m_index_ring_buffer, *m_attrib_ring_buffer,
 		m_gl_attrib_buffers, m_program, m_min_texbuffer_alignment,
-		m_vertex_cache.get(), vertex_layout_interleaved,
+		m_vertex_cache.get(), vertex_layout_interleaved, &m_gl_array_stream_buffer,
 		[this](const auto& state, const auto& list) {
 			return this->get_vertex_buffers(state, list, 0);
 		}),
