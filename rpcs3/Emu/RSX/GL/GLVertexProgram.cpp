@@ -304,7 +304,8 @@ namespace
 		OS << "			break;\n";
 		OS << "		case 3:\n";
 		OS << "			//unsigned byte\n";
-		OS << "			result[n] = texelFetch(input_stream, first_byte++).x / 255.;\n";
+		OS << "			result[n] = texelFetch(input_stream, first_byte++).x;\n";
+		OS << "			scale[n] = 255.;\n";
 		OS << "			reverse_order = (desc.swap_bytes != 0);\n";
 		OS << "			break;\n";
 		OS << "		case 4:\n";
