@@ -43,8 +43,8 @@ void GLVertexDecompilerThread::insertInputs(std::stringstream & OS, const std::v
 {
 	if (rsx_vertex_program.interleaved_input)
 	{
-		OS << "layout(location=0) uniform isamplerBuffer input_attribute_stream;\n";
-		OS << "layout(location=1) uniform isamplerBuffer input_register_stream;\n";
+		OS << "layout(location=0) uniform usamplerBuffer input_attribute_stream;\n";
+		OS << "layout(location=1) uniform usamplerBuffer input_register_stream;\n";
 	}
 
 	std::vector<std::tuple<size_t, std::string>> input_data;
@@ -229,34 +229,51 @@ namespace
 		OS << "	int is_register;\n";
 		OS << "};\n\n";
 
-		OS << "int get_bits(ivec4 v, int swap)\n";
+		OS << "uint get_bits(uvec4 v, int swap)\n";
 		OS << "{\n";
 		OS << "	if (swap != 0) return (v.w | v.z << 8 | v.y << 16 | v.x << 24);\n";
 		OS << "	return (v.x | v.y << 8 | v.z << 16 | v.w << 24);\n";
 		OS << "}\n\n";
 
-		OS << "int get_bits(ivec2 v, int swap)\n";
+		OS << "uint get_bits(uvec2 v, int swap)\n";
 		OS << "{\n";
 		OS << "	if (swap != 0) return (v.y | v.x << 8);\n";
 		OS << "	return (v.x | v.y << 8);\n";
 		OS << "}\n\n";
 
-		OS << "int preserve_sign_s16(int bits)\n";
+		OS << "int preserve_sign_s16(uint bits)\n";
 		OS << "{\n";
 		OS << "	//convert raw 16 bit value into signed 32-bit integer counterpart\n";
-		OS << "	int sign = bits & 0x8000;\n";
-		OS << "	if (sign != 0) return (bits | 0xFFFF0000);\n";
-		OS << "	return bits;\n";
+		OS << "	uint sign = bits & 0x8000;\n";
+		OS << "	if (sign != 0) return int(bits | 0xFFFF0000);\n";
+		OS << "	return int(bits);\n";
 		OS << "}\n\n";
+
+		OS << "float convert_to_f32(uint bits)\n";
+		OS << "{\n";
+		OS << "	uint sign = (bits >> 31) & 1;\n";
+		OS << "	uint exp = (bits >> 23) & 0xff;\n";
+		OS << "	uint mantissa = bits & 0x7fffff;\n";
+		OS << "	float base = (sign != 0)? -1.f: 1.f;\n";
+		OS << "	base *= exp2(exp - 127);\n";
+		OS << "	float scale = 0.f;\n\n";
+		OS << "	for (int x = 0; x < 23; x++)\n";
+		OS << "	{\n";
+		OS << "		int inv = (22 - x);\n";
+		OS << "		if ((mantissa & (1 << inv)) == 0) continue;\n";
+		OS << "		scale += 1.f / pow(2.f, float(inv));\n";
+		OS << "	}\n";
+		OS << "	return base * scale;\n";
+		OS << "}\n";
 
 		OS << "#define get_s16(v, s) preserve_sign_s16(get_bits(v, s))\n\n";
 
-		OS << "vec4 fetch_attribute(attribute_desc desc, int vertex_id, isamplerBuffer input_stream)\n";
+		OS << "vec4 fetch_attribute(attribute_desc desc, int vertex_id, usamplerBuffer input_stream)\n";
 		OS << "{\n";
 		OS << "	vec4 result = vec4(0., 0., 0., 1.);\n";
 		OS << "	vec4 scale = vec4(1.);\n";
-		OS << "	ivec4 tmp;\n";
-		OS << "	int bits;\n";
+		OS << "	uvec4 tmp;\n";
+		OS << "	uint bits;\n";
 		OS << "	bool reverse_order = false;\n";
 		OS << "\n";
 		OS << "	int first_byte = (vertex_id * desc.stride) + desc.starting_offset;\n";
@@ -277,7 +294,7 @@ namespace
 		OS << "			tmp[1] = texelFetch(input_stream, first_byte++).x;\n";
 		OS << "			tmp[2] = texelFetch(input_stream, first_byte++).x;\n";
 		OS << "			tmp[3] = texelFetch(input_stream, first_byte++).x;\n";
-		OS << "			result[n] = intBitsToFloat(get_bits(tmp, desc.swap_bytes));\n";
+		OS << "			result[n] = uintBitsToFloat(get_bits(tmp, desc.swap_bytes));\n";
 		OS << "			break;\n";
 		OS << "		case 2:\n";
 		OS << "			//half\n";
