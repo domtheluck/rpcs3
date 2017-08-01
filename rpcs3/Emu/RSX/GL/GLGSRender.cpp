@@ -329,6 +329,32 @@ void GLGSRender::end()
 		m_index_ring_buffer->reserve_storage_on_heap(16 * 1024);
 	}
 
+	//Do vertex upload before RTT prep / texture lookups to give the driver time to push data
+	u32 vertex_draw_count = m_last_vertex_count;
+	std::optional<std::tuple<GLenum, u32> > indexed_draw_info;
+	bool skip_upload = false;
+
+	if (!is_probable_instanced_draw())
+	{
+		std::tie(vertex_draw_count, indexed_draw_info) = set_vertex_buffer();
+		m_last_vertex_count = vertex_draw_count;
+	}
+	else
+	{
+		skip_upload = true;
+	}
+
+	if (manually_flush_ring_buffers)
+	{
+		m_attrib_ring_buffer->unmap();
+		m_index_ring_buffer->unmap();
+	}
+	else
+	{
+		//DMA push; not needed with MAP_COHERENT
+		//glMemoryBarrier(GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT);
+	}
+
 	//Check if depth buffer is bound and valid
 	//If ds is not initialized clear it; it seems new depth textures should have depth cleared
 	auto copy_rtt_contents = [](gl::render_target *surface)
@@ -470,31 +496,11 @@ void GLGSRender::end()
 	std::chrono::time_point<steady_clock> textures_end = steady_clock::now();
 	m_textures_upload_time += (u32)std::chrono::duration_cast<std::chrono::microseconds>(textures_end - textures_start).count();
 
-	u32 vertex_draw_count = m_last_vertex_count;
-	std::optional<std::tuple<GLenum, u32> > indexed_draw_info;
-	bool skip_upload = false;
-
-	if (!is_probable_instanced_draw())
-	{
-		std::tie(vertex_draw_count, indexed_draw_info) = set_vertex_buffer();
-		m_last_vertex_count = vertex_draw_count;
-	}
-	else
-	{
-		skip_upload = true;
-	}
-
 	std::chrono::time_point<steady_clock> draw_start = steady_clock::now();
 
 	if (g_cfg.video.debug_output)
 	{
 		m_program->validate();
-	}
-
-	if (manually_flush_ring_buffers)
-	{
-		m_attrib_ring_buffer->unmap();
-		m_index_ring_buffer->unmap();
 	}
 
 	if (indexed_draw_info || (skip_upload && m_last_draw_indexed == true))
