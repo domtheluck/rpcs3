@@ -1258,14 +1258,7 @@ namespace rsx
 
 		volatile_memory_size += (u32)layout.referenced_registers.size() * 16u;
 
-		if (rsx::method_registers.current_draw_clause.is_immediate_draw)
-		{
-			for (auto &info : layout.volatile_blocks)
-			{
-				volatile_memory_size += info.second;
-			}
-		}
-		else if (rsx::method_registers.current_draw_clause.command == rsx::draw_command::inlined_array)
+		if (rsx::method_registers.current_draw_clause.command == rsx::draw_command::inlined_array)
 		{
 			for (auto &block : layout.interleaved_blocks)
 			{
@@ -1274,6 +1267,16 @@ namespace rsx
 		}
 		else
 		{
+			//NOTE: Immediate commands can be index array only or both index array and vertex data
+			//Check both - but only check volatile blocks if immediate_draw flag is set
+			if (rsx::method_registers.current_draw_clause.is_immediate_draw)
+			{
+				for (auto &info : layout.volatile_blocks)
+				{
+					volatile_memory_size += info.second;
+				}
+			}
+
 			for (auto &block : layout.interleaved_blocks)
 			{
 				u32 unique_verts;
@@ -1407,28 +1410,34 @@ namespace rsx
 
 					is_be_type = false;
 				}
-				else if (rsx::method_registers.current_draw_clause.is_immediate_draw)
-				{
-					auto &info = rsx::method_registers.register_vertex_info[index];
-					type = info.type;
-					size = (s32)info.size;
-
-					attributes = rsx::get_vertex_type_size_on_host(type, size);
-					attributes |= default_frequency_mask | volatile_storage_mask;
-
-					is_be_type = true;
-				}
 				else
 				{
-					//Register
-					auto& info = rsx::method_registers.register_vertex_info[index];
-					type = info.type;
-					size = (s32)info.size;
+					//Data is either from an immediate render or register input
+					//Immediate data overrides register input
 
-					attributes = rsx::get_vertex_type_size_on_host(type, size);
-					attributes |= volatile_storage_mask;
+					if (rsx::method_registers.current_draw_clause.is_immediate_draw && vertex_push_buffers[index].size > 0)
+					{
+						auto &info = rsx::method_registers.register_vertex_info[index];
+						type = info.type;
+						size = (s32)info.size;
 
-					is_be_type = false;
+						attributes = rsx::get_vertex_type_size_on_host(type, size);
+						attributes |= default_frequency_mask | volatile_storage_mask;
+
+						is_be_type = true;
+					}
+					else
+					{
+						//Register
+						auto& info = rsx::method_registers.register_vertex_info[index];
+						type = info.type;
+						size = (s32)info.size;
+
+						attributes = rsx::get_vertex_type_size_on_host(type, size);
+						attributes |= volatile_storage_mask;
+
+						is_be_type = false;
+					}
 				}
 			}
 			else
@@ -1506,13 +1515,12 @@ namespace rsx
 
 			if (draw_call.is_immediate_draw)
 			{
+				//NOTE: It is possible for immediate draw to only contain index data, so vertex data can be in persistent memory
 				for (auto &info : layout.volatile_blocks)
 				{
 					memcpy(transient, vertex_push_buffers[info.first].data.data(), info.second);
 					transient += info.second;
 				}
-
-				return;
 			}
 		}
 
