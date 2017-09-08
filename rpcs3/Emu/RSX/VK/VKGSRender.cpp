@@ -1469,7 +1469,10 @@ void VKGSRender::flush_command_queue(bool hard_sync)
 
 		//Clear all command buffer statuses
 		for (auto &cb : m_primary_cb_list)
-			cb.poke();
+		{
+			if (cb.pending)
+				cb.poke();
+		}
 
 		m_last_flushable_cb = -1;
 		m_flush_commands = false;
@@ -1651,7 +1654,9 @@ void VKGSRender::do_local_task()
 	if (m_last_flushable_cb > -1)
 	{
 		auto cb = &m_primary_cb_list[m_last_flushable_cb];
-		cb->poke();
+
+		if (cb->pending)
+			cb->poke();
 
 		if (!cb->pending)
 			m_last_flushable_cb = -1;
