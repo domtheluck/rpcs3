@@ -513,7 +513,7 @@ void GLGSRender::end()
 	}
 
 	const GLenum draw_mode = gl::draw_mode(rsx::method_registers.current_draw_clause.primitive);
-	bool single_draw = rsx::method_registers.current_draw_clause.first_count_commands.size() == 1 || rsx::method_registers.current_draw_clause.is_disjoint_primitive;
+	bool single_draw = rsx::method_registers.current_draw_clause.first_count_commands.size() <= 1 || rsx::method_registers.current_draw_clause.is_disjoint_primitive;
 
 	if (indexed_draw_info)
 	{

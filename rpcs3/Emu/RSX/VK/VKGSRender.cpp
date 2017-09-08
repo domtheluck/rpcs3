@@ -1168,7 +1168,7 @@ void VKGSRender::end()
 	}
 
 	std::optional<std::tuple<VkDeviceSize, VkIndexType> > index_info = std::get<4>(upload_info);
-	bool single_draw = rsx::method_registers.current_draw_clause.first_count_commands.size() == 1 || rsx::method_registers.current_draw_clause.is_disjoint_primitive;
+	bool single_draw = rsx::method_registers.current_draw_clause.first_count_commands.size() <= 1 || rsx::method_registers.current_draw_clause.is_disjoint_primitive;
 
 	if (!index_info)
 	{
