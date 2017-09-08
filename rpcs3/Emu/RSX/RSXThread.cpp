@@ -1665,7 +1665,7 @@ namespace rsx
 			for (const auto &block : layout.interleaved_blocks)
 			{
 				u32 unique_verts;
-				u32 vertex_base = first_vertex * block.attribute_stride;
+				u32 vertex_base = 0;
 
 				if (block.single_vertex)
 				{
@@ -1684,6 +1684,7 @@ namespace rsx
 				else
 				{
 					unique_verts = vertex_count;
+					vertex_base = first_vertex * block.attribute_stride;
 				}
 
 				const u32 data_size = block.attribute_stride * unique_verts;

@@ -582,7 +582,7 @@ void GLGSRender::end()
 			}
 
 			///*
-			// TEST FOR DRIVER BUGS
+			// TEST FOR DRIVER BUGS - AMD: SHAME, SHAME, SHAME
 			for (int i = 0; i < draw_count; i++)
 			{
 				if (counts[i] > 0)
