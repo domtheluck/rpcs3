@@ -393,6 +393,7 @@ namespace rsx
 
 		// Deferred calls are used to batch draws together
 		u32 deferred_primitive_type = 0;
+		u32 deferred_call_size = 0;
 		bool has_deferred_call = false;
 
 		auto flush_command_queue = [&]()
@@ -445,6 +446,7 @@ namespace rsx
 			}
 
 			deferred_primitive_type = 0;
+			deferred_call_size = 0;
 			has_deferred_call = false;
 		};
 
@@ -563,6 +565,38 @@ namespace rsx
 							deferred_primitive_type = value;
 						else
 						{
+							deferred_call_size++;
+
+							// Combine all calls since the last one
+							auto &first_count = method_registers.current_draw_clause.first_count_commands;
+							if (first_count.size() > deferred_call_size)
+							{
+								const auto &batch_first_count = first_count[deferred_call_size - 1];
+								u32 count = batch_first_count.second;
+								u32 next = batch_first_count.first + count;
+
+								for (int n = deferred_call_size; n < first_count.size(); n++)
+								{
+									if (first_count[n].first != next)
+									{
+										LOG_ERROR(RSX, "Non-continous first-count range passed as one draw; will be split.");
+
+										first_count[deferred_call_size - 1].second = count;
+										deferred_call_size++;
+
+										count = first_count[deferred_call_size - 1].second;
+										next = first_count[deferred_call_size - 1].first + count;
+										continue;
+									}
+
+									count += first_count[n].second;
+									next += first_count[n].second;
+								}
+
+								first_count[deferred_call_size - 1].second = count;
+								first_count.resize(deferred_call_size);
+							}
+
 							has_deferred_call = true;
 							flush_commands_flag = false;
 							execute_method_call = false;
