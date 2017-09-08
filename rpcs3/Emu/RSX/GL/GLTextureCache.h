@@ -1073,12 +1073,21 @@ namespace gl
 			const u32 src_address = (u32)((u64)src.pixels - (u64)vm::base(0));
 			const u32 dst_address = (u32)((u64)dst.pixels - (u64)vm::base(0));
 
+			//Account for rasterization offsets for RGBA render targets - RSX insets raster area by 8 or 16 pixels depending on compression mode
+			const u32 src_raster_offset_x = src.compressed_x ? 16 : 8;
+			const u32 src_raster_offset_y = src.compressed_y ? 16 : 8;
+			const u32 dst_raster_offset_x = dst.compressed_x ? 16 : 8;
+			const u32 dst_raster_offset_y = dst.compressed_y ? 16 : 8;
+
+			u32 src_raster_offset = src_is_argb8 ? (src.pitch * src_raster_offset_y + src_raster_offset_x * 4) : 0;
+			u32 dst_raster_offset = dst_is_argb8 ? (dst.pitch * dst_raster_offset_y + dst_raster_offset_y * 4) : 0;
+
 			//Check if src/dst are parts of render targets
-			auto dst_subres = m_rtts.get_surface_subresource_if_applicable(dst_address, dst.width, dst.clip_height, dst.pitch, true, true, false);
+			auto dst_subres = m_rtts.get_surface_subresource_if_applicable(dst_address - dst_raster_offset, dst.width, dst.clip_height, dst.pitch, true, true, false);
 			dst_is_render_target = dst_subres.surface != nullptr;
 
 			//TODO: Handle cases where src or dst can be a depth texture while the other is a color texture - requires a render pass to emulate
-			auto src_subres = m_rtts.get_surface_subresource_if_applicable(src_address, src.width, src.height, src.pitch, true, true, false);
+			auto src_subres = m_rtts.get_surface_subresource_if_applicable(src_address - src_raster_offset, src.width, src.height, src.pitch, true, true, false);
 			src_is_render_target = src_subres.surface != nullptr;
 
 			//Always use GPU blit if src or dst is in the surface store
@@ -1092,9 +1101,8 @@ namespace gl
 			//Copy from [src.offset_x, src.offset_y] a region of [clip.width, clip.height]
 			//Stretch onto [dst.offset_x, y] with clipping performed on the source region
 			//The implementation here adds the inverse scaled clip dimensions onto the source to completely bypass final clipping step
-
-			float scale_x = (f32)dst.width / src.width;
-			float scale_y = (f32)dst.height / src.height;
+			float scale_x = dst.scale_x;
+			float scale_y = dst.scale_y;
 
 			//Clip offset is unused if the clip offsets are reprojected onto the source
 			position2i clip_offset = { 0, 0 };//{ dst.clip_x, dst.clip_y };
@@ -1102,12 +1110,12 @@ namespace gl
 
 			size2i clip_dimensions = { dst.clip_width, dst.clip_height };
 			//Dimensions passed are restricted to powers of 2; get real height from clip_height and width from pitch
-			const size2i dst_dimensions = { dst.pitch / (dst_is_argb8 ? 4 : 2), dst.clip_height };
+			size2i dst_dimensions = { dst.pitch / (dst_is_argb8 ? 4 : 2), dst.clip_height };
 
 			//Offset in x and y for src is 0 (it is already accounted for when getting pixels_src)
 			//Reproject final clip onto source...
-			const u16 src_w = (const u16)((f32)clip_dimensions.width / scale_x);
-			const u16 src_h = (const u16)((f32)clip_dimensions.height / scale_y);
+			const u16 src_w = (const u16)((f32)clip_dimensions.width / dst.scale_x);
+			const u16 src_h = (const u16)((f32)clip_dimensions.height / dst.scale_y);
 
 			areai src_area = { 0, 0, src_w, src_h };
 			areai dst_area = { 0, 0, dst.clip_width, dst.clip_height };
@@ -1242,8 +1250,8 @@ namespace gl
 				{
 					f32 subres_scaling_x = (f32)src.pitch / src_subres.surface->get_native_pitch();
 					
-					dst_area.x2 = (int)(src_subres.w * scale_x * subres_scaling_x);
-					dst_area.y2 = (int)(src_subres.h * scale_y);
+					dst_area.x2 = (int)(src_subres.w * dst.scale_x * subres_scaling_x);
+					dst_area.y2 = (int)(src_subres.h * dst.scale_y);
 				}
 
 				src_area.x2 = src_subres.w;				
@@ -1253,6 +1261,14 @@ namespace gl
 				src_area.x2 += src_subres.x;
 				src_area.y1 += src_subres.y;
 				src_area.y2 += src_subres.y;
+
+				if (src.compressed_y)
+				{
+					dst_area.y1 *= 2;
+					dst_area.y2 *= 2;
+
+					dst_dimensions.height *= 2;
+				}
 
 				vram_texture = src_subres.surface->id();
 			}
@@ -1299,8 +1315,8 @@ namespace gl
 			if (dst.clip_x || dst.clip_y)
 			{
 				//Reproject clip offsets onto source
-				const u16 scaled_clip_offset_x = (const u16)((f32)dst.clip_x / scale_x);
-				const u16 scaled_clip_offset_y = (const u16)((f32)dst.clip_y / scale_y);
+				const u16 scaled_clip_offset_x = (const u16)((f32)dst.clip_x / dst.scale_x);
+				const u16 scaled_clip_offset_y = (const u16)((f32)dst.clip_y / dst.scale_y);
 
 				src_area.x1 += scaled_clip_offset_x;
 				src_area.x2 += scaled_clip_offset_x;
@@ -1321,7 +1337,7 @@ namespace gl
 
 			const u8 bpp = dst_is_argb8 ? 4 : 2;
 			const u32 real_width = dst.pitch / bpp;
-			cached_texture_section &cached = create_texture(texture_id, dst.rsx_address, dst.pitch * dst.clip_height, real_width, dst.clip_height);
+			cached_texture_section &cached = create_texture(texture_id, dst.rsx_address, dst.pitch * dst.clip_height, real_width, dst_dimensions.height);
 			//These textures are completely GPU resident so we dont watch for CPU access
 			//There's no data to be fetched from the CPU
 			//Its is possible for a title to attempt to read from the region, but the CPU path should be used in such cases

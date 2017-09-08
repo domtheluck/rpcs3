@@ -1121,14 +1121,9 @@ void GLGSRender::flip(int buffer)
 	//Check the texture cache for a blitted copy
 	const u32 size = buffer_pitch * buffer_height;
 	auto surface = m_gl_texture_cache.find_texture_from_range(absolute_address, size);
-	bool ignore_scaling = false;
 
 	if (surface != nullptr)
 	{
-		auto dims = surface->get_dimensions();
-		buffer_width = std::get<0>(dims);
-		buffer_height = std::get<1>(dims);
-
 		m_flip_fbo.color = surface->id();
 		m_flip_fbo.read_buffer(m_flip_fbo.color);
 	}
@@ -1139,7 +1134,6 @@ void GLGSRender::flip(int buffer)
 
 		m_flip_fbo.color = *render_target_texture;
 		m_flip_fbo.read_buffer(m_flip_fbo.color);
-		ignore_scaling = true;
 	}
 	else
 	{
@@ -1170,20 +1164,6 @@ void GLGSRender::flip(int buffer)
 
 		m_flip_fbo.color = m_flip_tex_color;
 		m_flip_fbo.read_buffer(m_flip_fbo.color);
-		ignore_scaling = true;
-	}
-
-	if (!ignore_scaling && buffer_region.tile && buffer_region.tile->comp != CELL_GCM_COMPMODE_DISABLED)
-	{
-		LOG_ERROR(RSX, "Output buffer compression mode = 0x%X", buffer_region.tile->comp);
-
-		switch (buffer_region.tile->comp)
-		{
-		case CELL_GCM_COMPMODE_C32_2X2:
-		case CELL_GCM_COMPMODE_C32_2X1:
-			buffer_height = display_buffers[buffer].height / 2;
-			break;
-		}
 	}
 
 	// Blit source image to the screen
