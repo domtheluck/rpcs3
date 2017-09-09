@@ -29,7 +29,7 @@ struct work_item
 	std::mutex guard_mutex;
 
 	u32  address_to_flush = 0;
-	gl::texture_cache::cached_texture_section *section_to_flush = nullptr;
+	gl::cached_texture_section *section_to_flush = nullptr;
 
 	volatile bool processed = false;
 	volatile bool result = false;
@@ -86,6 +86,7 @@ private:
 	rsx::gcm_framebuffer_info depth_surface_info;
 
 	bool flush_draw_buffers = false;
+	std::thread::id m_thread_id;
 
 public:
 	gl::fbo draw_fbo;
@@ -405,7 +406,7 @@ public:
 	void set_viewport();
 
 	void synchronize_buffers();
-	work_item& post_flush_request(u32 address, gl::texture_cache::cached_texture_section *section);
+	work_item& post_flush_request(u32 address, gl::cached_texture_section *section);
 
 	bool scaled_image_from_memory(rsx::blit_src_info& src_info, rsx::blit_dst_info& dst_info, bool interpolate) override;
 	

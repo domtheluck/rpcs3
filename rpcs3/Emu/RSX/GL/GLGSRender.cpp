@@ -766,7 +766,8 @@ void GLGSRender::on_init_thread()
 	glEnable(GL_CLIP_DISTANCE0 + 4);
 	glEnable(GL_CLIP_DISTANCE0 + 5);
 
-	m_gl_texture_cache.initialize(this);
+	m_gl_texture_cache.initialize();
+	m_thread_id = std::this_thread::get_id();
 
 	m_shaders_cache->load();
 }
@@ -831,7 +832,7 @@ void GLGSRender::on_exit()
 	}
 
 	m_text_printer.close();
-	m_gl_texture_cache.close();
+	m_gl_texture_cache.destroy();
 
 	for (u32 i = 0; i < occlusion_query_count; ++i)
 	{
@@ -1176,7 +1177,7 @@ void GLGSRender::flip(int buffer)
 	rsx::thread::flip(buffer);
 
 	// Cleanup
-	m_gl_texture_cache.clear_temporary_surfaces();
+	m_gl_texture_cache.on_frame_end();
 
 	for (auto &tex : m_rtts.invalidated_resources)
 		tex->remove();
@@ -1209,9 +1210,31 @@ u64 GLGSRender::timestamp() const
 bool GLGSRender::on_access_violation(u32 address, bool is_writing)
 {
 	if (is_writing)
-		return m_gl_texture_cache.mark_as_dirty(address);
+		return m_gl_texture_cache.invalidate_address(address);
 	else
-		return m_gl_texture_cache.flush_section(address);
+	{
+		if (std::this_thread::get_id() != m_thread_id)
+		{
+			bool flushable;
+			gl::cached_texture_section* section_to_post;
+			
+			std::tie(flushable, section_to_post) = m_gl_texture_cache.address_is_flushable(address);
+			if (!flushable) return false;
+			
+			work_item &task = post_flush_request(address, section_to_post);
+
+			vm::temporary_unlock();
+			{
+				std::unique_lock<std::mutex> lock(task.guard_mutex);
+				task.cv.wait(lock, [&task] { return task.processed; });
+			}
+
+			task.received = true;
+			return task.result;
+		}
+					
+		return m_gl_texture_cache.flush_address(address);
+	}
 }
 
 void GLGSRender::on_notify_memory_unmapped(u32 address_base, u32 size)
@@ -1253,7 +1276,7 @@ void GLGSRender::do_local_task()
 	}
 }
 
-work_item& GLGSRender::post_flush_request(u32 address, gl::texture_cache::cached_texture_section *section)
+work_item& GLGSRender::post_flush_request(u32 address, gl::cached_texture_section *section)
 {
 	std::lock_guard<std::mutex> lock(queue_guard);
 
