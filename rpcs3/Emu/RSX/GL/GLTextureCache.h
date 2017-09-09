@@ -151,7 +151,11 @@ namespace gl
 		{
 			if (!read_only && pbo_id == 0)
 				init_buffer();
-				
+
+			flushed = false;
+			copied = false;
+			is_depth = false;
+
 			current_width = w;
 			current_height = h;
 			current_pitch = native_pitch;

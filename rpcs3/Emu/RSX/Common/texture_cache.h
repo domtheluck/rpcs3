@@ -415,8 +415,6 @@ namespace rsx
 
 						if (unprotect)
 						{
-							m_unreleased_texture_objects++;
-
 							tex.set_dirty(true);
 							tex.unprotect();
 						}
@@ -425,6 +423,7 @@ namespace rsx
 							tex.discard();
 						}
 
+						m_unreleased_texture_objects++;
 						range_data.valid_count--;
 						response = true;
 					}
