@@ -62,7 +62,7 @@ namespace rsx
 		~texture_cache() {}
 		
 		virtual void destroy() = 0;
-		virtual bool is_depth_texture(u32) = 0;
+		virtual bool is_depth_texture(const u32) = 0;
 		virtual void on_frame_end() = 0;
 
 		section_storage_type *find_texture_from_range(u32 rsx_address, u32 range)
@@ -84,7 +84,7 @@ namespace rsx
 			return nullptr;
 		}
 
-		section_storage_type *find_texture_from_dimensions(u32 rsx_address, u32 /*rsx_size*/, u16 width = 0, u16 height = 0, u16 mipmaps = 0)
+		section_storage_type *find_texture_from_dimensions(u32 rsx_address, u16 width = 0, u16 height = 0, u16 mipmaps = 0)
 		{
 			auto found = m_cache.find(rsx_address);
 			if (found != m_cache.end())

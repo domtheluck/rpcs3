@@ -733,7 +733,7 @@ namespace vk
 			{
 				//First check if this surface exists in VRAM with exact dimensions
 				//Since scaled GPU resources are not invalidated by the CPU, we need to reuse older surfaces if possible
-				cached_dest = find_texture_from_dimensions(dst.rsx_address, dst.pitch * dst.clip_height, dst_dimensions.width, dst_dimensions.height);
+				cached_dest = find_texture_from_dimensions(dst.rsx_address, dst_dimensions.width, dst_dimensions.height);
 
 				//Check for any available region that will fit this one
 				if (!cached_dest) cached_dest = find_texture_from_range(dst.rsx_address, dst.pitch * dst.clip_height);
@@ -805,7 +805,7 @@ namespace vk
 			//Create source texture if does not exist
 			if (!src_is_render_target)
 			{
-				auto preloaded_texture = find_texture_from_dimensions(src_address, src.pitch * src.slice_h, src.width, src.slice_h);
+				auto preloaded_texture = find_texture_from_dimensions(src_address, src.width, src.slice_h);
 
 				if (preloaded_texture != nullptr)
 				{

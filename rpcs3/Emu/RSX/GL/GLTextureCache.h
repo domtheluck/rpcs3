@@ -482,6 +482,7 @@ namespace gl
 			tex.reset(texaddr, texsize, false);
 			tex.create_read_only(id, w, h);
 			read_only_range = tex.get_min_max(read_only_range);
+			return tex;
 		}
 
 		void clear()
@@ -976,10 +977,10 @@ namespace gl
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 					glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, src.width, src.slice_h, src_gl_format, src_gl_type, src.pixels);
-
-					writer_lock lock(m_cache_mutex);
 					
 					auto &section = create_texture(vram_texture, src_address, src.pitch * src.slice_h, src.width, src.slice_h);
+					writer_lock lock(m_cache_mutex);
+
 					section.protect(utils::protection::ro);
 					section.set_dirty(false);
 				}
