@@ -568,9 +568,7 @@ namespace rsx
 				return 0;
 			}
 
-			/**
-			* Check for sampleable rtts from previous render passes
-			*/
+			//Check for sampleable rtts from previous render passes
 			if (auto texptr = m_rtts.get_texture_from_render_target_if_applicable(texaddr))
 			{
 				for (const auto& tex : m_rtts.m_bound_render_targets)
@@ -580,8 +578,7 @@ namespace rsx
 						if (g_cfg.video.strict_rendering_mode)
 						{
 							LOG_WARNING(RSX, "Attempting to sample a currently bound render target @ 0x%x", texaddr);
-							create_temporary_subresource_view(cmd, texptr, format, 0, 0, texptr->width(), texptr->height());
-							return 0;
+							return create_temporary_subresource_view(cmd, texptr, format, 0, 0, texptr->width(), texptr->height());
 						}
 						else
 						{
@@ -602,8 +599,7 @@ namespace rsx
 					if (g_cfg.video.strict_rendering_mode)
 					{
 						LOG_WARNING(RSX, "Attempting to sample a currently bound depth surface @ 0x%x", texaddr);
-						create_temporary_subresource_view(cmd, texptr, format, 0, 0, texptr->width(), texptr->height());
-						return 0;
+						return create_temporary_subresource_view(cmd, texptr, format, 0, 0, texptr->width(), texptr->height());
 					}
 					else
 					{
@@ -615,12 +611,11 @@ namespace rsx
 				return texptr->get_view();
 			}
 
-			/**
-			* Check if we are re-sampling a subresource of an RTV/DSV texture, bound or otherwise
-			* (Turbo: Super Stunt Squad does this; bypassing the need for a sync object)
-			* The engine does not read back the texture resource through cell, but specifies a texture location that is
-			* a bound render target. We can bypass the expensive download in this case
-			*/
+			/* Check if we are re-sampling a subresource of an RTV/DSV texture, bound or otherwise
+			 * (Turbo: Super Stunt Squad does this; bypassing the need for a sync object)
+			 * The engine does not read back the texture resource through cell, but specifies a texture location that is
+			 * a bound render target. We can bypass the expensive download in this case
+			 */
 
 			const f32 internal_scale = (f32)tex_pitch / native_pitch;
 			const u32 internal_width = (const u32)(tex_width * internal_scale);
@@ -669,10 +664,8 @@ namespace rsx
 				}
 			}
 
-			/**
-			* If all the above failed, then its probably a generic texture.
-			* Search in cache and upload/bind
-			*/
+			//If all the above failed, then its probably a generic texture.
+			//Search in cache and upload/bind
 
 			auto cached_texture = find_texture_from_dimensions(texaddr, tex_width, tex_height);
 			if (cached_texture)
@@ -680,34 +673,7 @@ namespace rsx
 				return cached_texture->get_raw_view();
 			}
 
-			/**
-			* Check for subslices from the cache in case we only have a subset a larger texture
-			*/
-			cached_texture = find_texture_from_range(texaddr, range);
-			if (cached_texture)
-			{
-				const u32 address_offset = texaddr - cached_texture->get_section_base();
-				u16 offset_x = 0, offset_y = 0;
-
-				if (address_offset)
-				{
-					const u32 bpp = get_format_block_size_in_bytes(format);
-
-					offset_y = address_offset / tex_pitch;
-					offset_x = address_offset % tex_pitch;
-
-					offset_x /= bpp;
-					offset_y /= bpp;
-				}
-
-				image_resource_type src = cached_texture->get_raw_texture();
-				auto view = create_temporary_subresource_view(cmd, &src, format, offset_x, offset_y, tex_width, tex_height);
-				if (view) return view;
-			}
-
-			/**
-			* Do direct upload from CPU as the last resort
-			*/
+			//Do direct upload from CPU as the last resort
 			const auto extended_dimension = tex.get_extended_texture_dimension();
 			u16 height = 0;
 			u16 depth = 0;

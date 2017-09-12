@@ -424,7 +424,7 @@ namespace vk
 
 			VkImageLayout old_src_layout = source->current_layout;
 
-			vk::change_image_layout(cmd, image.get(), VK_IMAGE_LAYOUT_GENERAL, subresource_range);
+			vk::change_image_layout(cmd, image.get(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresource_range);
 			vk::change_image_layout(cmd, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, subresource_range);
 
 			VkImageCopy copy_rgn;
@@ -550,9 +550,9 @@ namespace vk
 			}
 
 			vk::image_view *view = new vk::image_view(*m_device, image->value, image_view_type, vk_format,
-				mapping, { (aspect_flags & ~VK_IMAGE_ASPECT_STENCIL_BIT), 0, 1, 0, layer});
+				mapping, { (aspect_flags & ~VK_IMAGE_ASPECT_STENCIL_BIT), 0, mipmaps, 0, layer});
 
-			change_image_layout(cmd, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, { aspect_flags, 0, 1, 0, 1 });
+			change_image_layout(cmd, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, { aspect_flags, 0, mipmaps, 0, layer });
 
 			cached_texture_section& region = find_cached_texture(rsx_address, rsx_size, true, width, height, 0);
 			region.reset(rsx_address, rsx_size);
@@ -572,29 +572,18 @@ namespace vk
 					rsx::texture_create_flags::default_component_order, remap_vector);
 
 			auto image = section->get_raw_texture();
+			auto subres_range = section->get_raw_view()->info.subresourceRange;
 
-			VkImageAspectFlags aspect_flags;
-			switch (gcm_format)
-			{
-			case CELL_GCM_TEXTURE_DEPTH24_D8:
-				aspect_flags = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-				break;
-			case CELL_GCM_TEXTURE_DEPTH16:
-				aspect_flags = VK_IMAGE_ASPECT_DEPTH_BIT;
-				break;
-			default:
-				aspect_flags = VK_IMAGE_ASPECT_COLOR_BIT;
-				break;
-			}
+			change_image_layout(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subres_range);
 
 			vk::enter_uninterruptible();
 
-			copy_mipmaped_image_using_buffer(cmd, image->value, subresource_layout, gcm_format, swizzled, mipmaps,
+			vk::copy_mipmaped_image_using_buffer(cmd, image->value, subresource_layout, gcm_format, swizzled, mipmaps, subres_range.aspectMask,
 				*m_texture_upload_heap, m_texture_upload_buffer);
 
 			vk::leave_uninterruptible();
 
-			change_image_layout(cmd, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, { aspect_flags, 0, 1, 0, 1});
+			change_image_layout(cmd, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, subres_range);
 
 			return section;
 		}
