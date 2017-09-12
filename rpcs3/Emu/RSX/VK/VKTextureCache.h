@@ -135,6 +135,11 @@ namespace vk
 			return managed_texture;
 		}
 
+		vk::image_view* get_raw_view()
+		{
+			return uploaded_image_view.get();
+		}
+
 		vk::image* get_raw_texture()
 		{
 			return managed_texture.get();
@@ -348,43 +353,6 @@ namespace vk
 		std::vector<std::unique_ptr<vk::image_view>> m_image_views_to_purge;
 		std::vector<std::unique_ptr<vk::image>> m_images_to_purge;
 		
-		//Helpers
-		VkComponentMapping get_component_map(rsx::fragment_texture &tex, u32 gcm_format)
-		{
-			//Decoded remap returns 2 arrays; a redirection table and a lookup reference
-			auto decoded_remap = tex.decoded_remap();
-
-			//NOTE: Returns mapping in A-R-G-B
-			auto native_mapping = vk::get_component_mapping(gcm_format);
-			VkComponentSwizzle final_mapping[4] = {};
-
-			for (u8 channel = 0; channel < 4; ++channel)
-			{
-				switch (decoded_remap.second[channel])
-				{
-				case CELL_GCM_TEXTURE_REMAP_ONE:
-					final_mapping[channel] = VK_COMPONENT_SWIZZLE_ONE;
-					break;
-				case CELL_GCM_TEXTURE_REMAP_ZERO:
-					final_mapping[channel] = VK_COMPONENT_SWIZZLE_ZERO;
-					break;
-				default:
-					LOG_ERROR(RSX, "Unknown remap lookup value %d", decoded_remap.second[channel]);
-				case CELL_GCM_TEXTURE_REMAP_REMAP:
-					final_mapping[channel] = native_mapping[decoded_remap.first[channel]];
-					break;
-				}
-			}
-
-			return { final_mapping[1], final_mapping[2], final_mapping[3], final_mapping[0] };
-		}
-
-		VkComponentMapping get_component_map(rsx::vertex_texture&, u32 gcm_format)
-		{
-			auto mapping = vk::get_component_mapping(gcm_format);
-			return { mapping[1], mapping[2], mapping[3], mapping[0] };
-		}
-
 		void purge_cache()
 		{
 			for (auto &address_range : m_cache)
@@ -476,8 +444,13 @@ namespace vk
 			return m_temporary_image_view.back().get();
 		}
 
-		vk::image* create_new_texture(vk::command_buffer& cmd, u32 rsx_address, u32 rsx_size, u16 width, u16 height, u16 depth, u16 mipmaps, const u32 gcm_format,
-					const rsx::texture_dimension_extended type, const rsx::texture_create_flags flags) override
+		vk::image_view* create_temporary_subresource_view(vk::command_buffer& cmd, vk::image** source, u32 gcm_format, u16 x, u16 y, u16 w, u16 h) override
+		{
+			return create_temporary_subresource_view(cmd, *source, gcm_format, x, y, w, h);
+		}
+
+		cached_texture_section* create_new_texture(vk::command_buffer& cmd, u32 rsx_address, u32 rsx_size, u16 width, u16 height, u16 depth, u16 mipmaps, const u32 gcm_format,
+					const rsx::texture_dimension_extended type, const rsx::texture_create_flags flags, std::pair<std::array<u8, 4>, std::array<u8, 4>>& remap_vector) override
 		{
 			const bool is_cubemap = type == rsx::texture_dimension_extended::texture_dimension_cubemap;
 			VkFormat vk_format;
@@ -541,9 +514,31 @@ namespace vk
 			switch (flags)
 			{
 			case rsx::texture_create_flags::default_component_order:
-				const auto base_mapping = vk::get_component_mapping(gcm_format);
-				mapping = { base_mapping[1], base_mapping[2], base_mapping[3], base_mapping[0] };
+			{
+				auto native_mapping = vk::get_component_mapping(gcm_format);
+				VkComponentSwizzle final_mapping[4] = {};
+
+				for (u8 channel = 0; channel < 4; ++channel)
+				{
+					switch (remap_vector.second[channel])
+					{
+					case CELL_GCM_TEXTURE_REMAP_ONE:
+						final_mapping[channel] = VK_COMPONENT_SWIZZLE_ONE;
+						break;
+					case CELL_GCM_TEXTURE_REMAP_ZERO:
+						final_mapping[channel] = VK_COMPONENT_SWIZZLE_ZERO;
+						break;
+					case CELL_GCM_TEXTURE_REMAP_REMAP:
+						final_mapping[channel] = native_mapping[remap_vector.first[channel]];
+						break;
+					default:
+						LOG_ERROR(RSX, "Unknown remap lookup value %d", remap_vector.second[channel]);
+					}
+				}
+
+				mapping = { final_mapping[1], final_mapping[2], final_mapping[3], final_mapping[0] };
 				break;
+			}
 			case rsx::texture_create_flags::native_component_order:
 				mapping = image->native_component_map;
 				break;
@@ -566,13 +561,17 @@ namespace vk
 			region.set_dirty(false);
 
 			read_only_range = region.get_min_max(read_only_range);
-			return image;
+			return &region;
 		}
 
-		vk::image* upload_image_from_cpu(vk::command_buffer& cmd, u32 rsx_address, u16 width, u16 height, u16 depth, u16 mipmaps, u16 pitch, const u32 gcm_format,
-			std::vector<rsx_subresource_layout>& subresource_layout, const rsx::texture_dimension_extended type, const bool swizzled, void *pixels) override
+		cached_texture_section* upload_image_from_cpu(vk::command_buffer& cmd, u32 rsx_address, u16 width, u16 height, u16 depth, u16 mipmaps, u16 pitch, const u32 gcm_format,
+			std::vector<rsx_subresource_layout>& subresource_layout, const rsx::texture_dimension_extended type, const bool swizzled,
+			std::pair<std::array<u8, 4>, std::array<u8, 4>>& remap_vector) override
 		{
-			auto image = create_new_texture(cmd, rsx_address, pitch * height, width, height, depth, mipmaps, gcm_format, type, rsx::texture_create_flags::default_component_order);
+			auto section = create_new_texture(cmd, rsx_address, pitch * height, width, height, depth, mipmaps, gcm_format, type,
+					rsx::texture_create_flags::default_component_order, remap_vector);
+
+			auto image = section->get_raw_texture();
 
 			VkImageAspectFlags aspect_flags;
 			switch (gcm_format)
@@ -597,7 +596,7 @@ namespace vk
 
 			change_image_layout(cmd, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, { aspect_flags, 0, 1, 0, 1});
 
-			return image;
+			return section;
 		}
 
 		void enforce_surface_creation_type(cached_texture_section& section, const rsx::texture_create_flags expected_flags) override
@@ -630,6 +629,9 @@ namespace vk
 				view.reset(new_view);
 			}
 		}
+
+		void insert_texture_barrier() override
+		{}
 
 	public:
 
@@ -692,141 +694,6 @@ namespace vk
 
 			m_image_views_to_purge = std::move(m_temporary_image_view);
 			m_images_to_purge = std::move(m_dirty_textures);
-		}
-
-		template <typename RsxTextureType>
-		vk::image_view* upload_texture(command_buffer &cmd, RsxTextureType &tex, rsx::vk_render_targets &m_rtts, const vk::memory_type_mapping &memory_type_mapping, vk_data_heap& upload_heap, vk::buffer* upload_buffer)
-		{
-			const u32 texaddr = rsx::get_address(tex.offset(), tex.location());
-			const u32 range = (u32)get_texture_size(tex);
-			const u32 format = tex.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
-
-			if (!texaddr || !range)
-			{
-				LOG_ERROR(RSX, "Texture upload requested but texture not found, (address=0x%X, size=0x%X)", texaddr, range);
-				return nullptr;
-			}
-
-			//First check if it exists as an rtt...
-			vk::render_target *rtt_texture = nullptr;
-			if ((rtt_texture = m_rtts.get_texture_from_render_target_if_applicable(texaddr)))
-			{
-				if (g_cfg.video.strict_rendering_mode)
-				{
-					for (const auto& tex : m_rtts.m_bound_render_targets)
-					{
-						if (std::get<0>(tex) == texaddr)
-						{
-							LOG_WARNING(RSX, "Attempting to sample a currently bound render target @ 0x%x", texaddr);
-							return create_temporary_subresource_view(cmd, rtt_texture, format, 0, 0, rtt_texture->width(), rtt_texture->height());
-						}
-					}
-				}
-
-				return rtt_texture->get_view();
-			}
-
-			if ((rtt_texture = m_rtts.get_texture_from_depth_stencil_if_applicable(texaddr)))
-			{
-				if (g_cfg.video.strict_rendering_mode)
-				{
-					if (std::get<0>(m_rtts.m_bound_depth_stencil) == texaddr)
-					{
-						LOG_WARNING(RSX, "Attempting to sample a currently bound depth surface @ 0x%x", texaddr);
-						return create_temporary_subresource_view(cmd, rtt_texture, format, 0, 0, rtt_texture->width(), rtt_texture->height());
-					}
-				}
-
-				return rtt_texture->get_view();
-			}
-
-			VkImageType image_type;
-			VkImageViewType image_view_type;
-			u16 height = 0;
-			u16 depth = 0;
-			u8 layer = 0;
-
-			switch (tex.get_extended_texture_dimension())
-			{
-			case rsx::texture_dimension_extended::texture_dimension_1d:
-				image_type = VK_IMAGE_TYPE_1D;
-				image_view_type = VK_IMAGE_VIEW_TYPE_1D;
-				height = 1;
-				depth = 1;
-				layer = 1;
-				break;
-			case rsx::texture_dimension_extended::texture_dimension_2d:
-				image_type = VK_IMAGE_TYPE_2D;
-				image_view_type = VK_IMAGE_VIEW_TYPE_2D;
-				height = tex.height();
-				depth = 1;
-				layer = 1;
-				break;
-			case rsx::texture_dimension_extended::texture_dimension_cubemap:
-				image_type = VK_IMAGE_TYPE_2D;
-				image_view_type = VK_IMAGE_VIEW_TYPE_CUBE;
-				height = tex.height();
-				depth = 1;
-				layer = 6;
-				break;
-			case rsx::texture_dimension_extended::texture_dimension_3d:
-				image_type = VK_IMAGE_TYPE_3D;
-				image_view_type = VK_IMAGE_VIEW_TYPE_3D;
-				height = tex.height();
-				depth = tex.depth();
-				layer = 1;
-				break;
-			}
-
-			//Ignoring the mipmaps count is intentional - its common for games to pass in incorrect values as mipmap count
-			cached_texture_section& region = find_cached_texture(texaddr, range, true, tex.width(), height, 0);
-			if (region.exists() && !region.is_dirty())
-			{
-				return region.get_view().get();
-			}
-
-			bool is_cubemap = tex.get_extended_texture_dimension() == rsx::texture_dimension_extended::texture_dimension_cubemap;
-			VkImageSubresourceRange subresource_range = vk::get_image_subresource_range(0, 0, is_cubemap ? 6 : 1, tex.get_exact_mipmap_count(), VK_IMAGE_ASPECT_COLOR_BIT);
-
-			//If for some reason invalid dimensions are requested, fail
-			if (!height || !depth || !layer || !tex.width())
-			{
-				LOG_ERROR(RSX, "Texture upload requested but invalid texture dimensions passed");
-				return nullptr;
-			}
-
-			VkComponentMapping mapping = get_component_map(tex, format);
-			VkFormat vk_format = get_compatible_sampler_format(format);
-
-			vk::image *image = new vk::image(*vk::get_current_renderer(), memory_type_mapping.device_local, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				image_type,
-				vk_format,
-				tex.width(), height, depth, tex.get_exact_mipmap_count(), layer, VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, is_cubemap ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0);
-			change_image_layout(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresource_range);
-
-			vk::image_view *view = new vk::image_view(*vk::get_current_renderer(), image->value, image_view_type, vk_format,
-				mapping,
-				subresource_range);
-
-			//We cannot split mipmap uploads across multiple command buffers (must explicitly open and close operations on the same cb)
-			vk::enter_uninterruptible();
-
-			copy_mipmaped_image_using_buffer(cmd, image->value, get_subresources_layout(tex), format, !(tex.format() & CELL_GCM_TEXTURE_LN), tex.get_exact_mipmap_count(),
-				upload_heap, upload_buffer);
-
-			change_image_layout(cmd, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, subresource_range);
-
-			vk::leave_uninterruptible();
-			writer_lock lock(m_cache_mutex);
-
-			region.reset(texaddr, range);
-			region.create(tex.width(), height, depth, tex.get_exact_mipmap_count(), view, image);
-			region.protect(utils::protection::ro);
-			region.set_dirty(false);
-
-			read_only_range = region.get_min_max(read_only_range);
-			return view;
 		}
 
 		bool blit(rsx::blit_src_info& src, rsx::blit_dst_info& dst, bool interpolate, rsx::vk_render_targets& m_rtts, vk::command_buffer& cmd)

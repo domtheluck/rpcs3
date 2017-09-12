@@ -372,14 +372,14 @@ namespace gl
 			return vram_texture == 0;
 		}
 
-		const u32 id() const
+		u32 get_raw_view() const
 		{
 			return vram_texture;
 		}
 
-		const u32 get_raw_texture() const
+		u32 get_raw_texture() const
 		{
-			return id();
+			return vram_texture;
 		}
 
 		u32 get_width() const
@@ -544,6 +544,12 @@ namespace gl
 			tex.destroy();
 		}
 
+		u32 create_temporary_subresource_view(void*&, u32* src, u32 gcm_format, u16 x, u16 y, u16 w, u16 h) override
+		{
+			const GLenum ifmt = gl::get_sized_internal_format(gcm_format);
+			return create_temporary_subresource(*src, ifmt, x, y, w, h);
+		}
+
 		u32 create_temporary_subresource_view(void*&, gl::texture* src, u32 gcm_format, u16 x, u16 y, u16 w, u16 h) override
 		{
 			if (auto as_rtt = dynamic_cast<gl::render_target*>(src))
@@ -553,12 +559,12 @@ namespace gl
 			else
 			{
 				const GLenum ifmt = gl::get_sized_internal_format(gcm_format);
-				return create_temporary_subresource(src->id(), (GLenum)as_rtt->get_compatible_internal_format(), x, y, w, h);
+				return create_temporary_subresource(src->id(), ifmt, x, y, w, h);
 			}
 		}
 
-		u32 create_new_texture(void*&, u32 rsx_address, u32 rsx_size, u16 width, u16 height, u16 depth, u16 mipmaps, const u32 gcm_format,
-				const rsx::texture_dimension_extended type, const rsx::texture_create_flags flags) override
+		cached_texture_section* create_new_texture(void*&, u32 rsx_address, u32 rsx_size, u16 width, u16 height, u16 depth, u16 mipmaps, const u32 gcm_format,
+				const rsx::texture_dimension_extended type, const rsx::texture_create_flags flags, std::pair<std::array<u8, 4>, std::array<u8, 4>>& remap_vector) override
 		{
 			u32 vram_texture = 0;
 			bool depth_flag = false;
@@ -591,14 +597,16 @@ namespace gl
 			cached.set_dirty(false);
 			cached.set_depth_flag(depth_flag);
 
-			return vram_texture;
+			return &cached;
 		}
 
-		u32 upload_image_from_cpu(void*&, u32 rsx_address, u16 width, u16 height, u16 depth, u16 mipmaps, u16 pitch, const u32 gcm_format,
-			std::vector<rsx_subresource_layout>& subresource_layout, const rsx::texture_dimension_extended type, const bool swizzled, void *pixels) override
+		cached_texture_section* upload_image_from_cpu(void*&, u32 rsx_address, u16 width, u16 height, u16 depth, u16 mipmaps, u16 pitch, const u32 gcm_format,
+			std::vector<rsx_subresource_layout>& subresource_layout, const rsx::texture_dimension_extended type, const bool swizzled,
+			std::pair<std::array<u8, 4>, std::array<u8, 4>>& remap_vector) override
 		{
 			void* unused = nullptr;
-			u32 vram_texture = create_new_texture(unused, rsx_address, pitch * height, width, height, depth, mipmaps, gcm_format, type, rsx::texture_create_flags::default_component_order);
+			auto section = create_new_texture(unused, rsx_address, pitch * height, width, height, depth, mipmaps, gcm_format, type,
+				rsx::texture_create_flags::default_component_order, remap_vector);
 
 			GLenum view_fmt;
 			GLenum data_type;
@@ -620,17 +628,27 @@ namespace gl
 			}
 
 			const GLint unpack_row_length = pitch / bpp;
-			glBindTexture(GL_TEXTURE_2D, vram_texture);
+			glBindTexture(GL_TEXTURE_2D, section->get_raw_texture());
 			glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
 			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 			glPixelStorei(GL_UNPACK_SWAP_BYTES, swap_bytes);
-			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, view_fmt, data_type, pixels);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, view_fmt, data_type, subresource_layout.front().data.data());
 
-			return vram_texture;
+			return section;
 		}
 
 		void enforce_surface_creation_type(cached_texture_section& section, const rsx::texture_create_flags flags) override
 		{
+		}
+
+		void insert_texture_barrier() override
+		{
+			auto &caps = gl::get_driver_caps();
+
+			if (caps.ARB_texture_barrier_supported)
+				glTextureBarrier();
+			else if (caps.NV_texture_barrier_supported)
+				glTextureBarrierNV();
 		}
 
 	public:
@@ -675,213 +693,14 @@ namespace gl
 		}
 
 		template<typename RsxTextureType>
-		void upload_texture(int index, RsxTextureType &tex, rsx::gl::texture &gl_texture, gl_render_targets &m_rtts)
+		void upload_and_bind_texture(int index, RsxTextureType &tex, rsx::gl::texture &gl_texture, gl_render_targets &m_rtts)
 		{
-			const u32 texaddr = rsx::get_address(tex.offset(), tex.location());
-			const u32 range = (u32)get_texture_size(tex);
-			
-			const u32 format = tex.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
-			const u32 tex_width = tex.width();
-			const u32 tex_height = tex.height();
-			const u32 native_pitch = (tex_width * get_format_block_size_in_bytes(format));
-			const u32 tex_pitch = (tex.pitch() == 0)? native_pitch: tex.pitch();
+			glActiveTexture(index);
+			void* unused = nullptr;
 
-			if (!texaddr || !range)
-			{
-				LOG_ERROR(RSX, "Texture upload requested but texture not found, (address=0x%X, size=0x%X)", texaddr, range);
-				gl_texture.bind();
-				return;
-			}
-
-			glActiveTexture(GL_TEXTURE0 + index);
-
-			/**
-			 * Check for sampleable rtts from previous render passes
-			 */
-			gl::render_target *texptr = nullptr;
-			if ((texptr = m_rtts.get_texture_from_render_target_if_applicable(texaddr)))
-			{
-				for (const auto& tex : m_rtts.m_bound_render_targets)
-				{
-					if (std::get<0>(tex) == texaddr)
-					{
-						if (g_cfg.video.strict_rendering_mode)
-						{
-							LOG_WARNING(RSX, "Attempting to sample a currently bound render target @ 0x%x", texaddr);
-							create_temporary_subresource(texptr->id(), (GLenum)texptr->get_compatible_internal_format(), 0, 0, texptr->width(), texptr->height());
-							return;
-						}
-						else
-						{
-							//issue a texture barrier to ensure previous writes are visible
-							auto &caps = gl::get_driver_caps();
-
-							if (caps.ARB_texture_barrier_supported)
-								glTextureBarrier();
-							else if (caps.NV_texture_barrier_supported)
-								glTextureBarrierNV();
-
-							break;
-						}
-					}
-				}
-
-				texptr->bind();
-				return;
-			}
-
-			if ((texptr = m_rtts.get_texture_from_depth_stencil_if_applicable(texaddr)))
-			{
-				if (texaddr == std::get<0>(m_rtts.m_bound_depth_stencil))
-				{
-					if (g_cfg.video.strict_rendering_mode)
-					{
-						LOG_WARNING(RSX, "Attempting to sample a currently bound depth surface @ 0x%x", texaddr);
-						create_temporary_subresource(texptr->id(), (GLenum)texptr->get_compatible_internal_format(), 0, 0, texptr->width(), texptr->height());
-						return;
-					}
-					else
-					{
-						//issue a texture barrier to ensure previous writes are visible
-						auto &caps = gl::get_driver_caps();
-
-						if (caps.ARB_texture_barrier_supported)
-							glTextureBarrier();
-						else if (caps.NV_texture_barrier_supported)
-							glTextureBarrierNV();
-					}
-				}
-
-				texptr->bind();
-				return;
-			}
-
-			/**
-			 * Check if we are re-sampling a subresource of an RTV/DSV texture, bound or otherwise
-			 * (Turbo: Super Stunt Squad does this; bypassing the need for a sync object)
-			 * The engine does not read back the texture resource through cell, but specifies a texture location that is
-			 * a bound render target. We can bypass the expensive download in this case
-			 */
-
-			const f32 internal_scale = (f32)tex_pitch / native_pitch;
-			const u32 internal_width = (const u32)(tex_width * internal_scale);
-
-			const auto rsc = m_rtts.get_surface_subresource_if_applicable(texaddr, internal_width, tex_height, tex_pitch, true);
-			if (rsc.surface)
-			{
-				//TODO: Check that this region is not cpu-dirty before doing a copy
-
-				if (tex.get_extended_texture_dimension() != rsx::texture_dimension_extended::texture_dimension_2d)
-				{
-					LOG_ERROR(RSX, "Sampling of RTT region as non-2D texture! addr=0x%x, Type=%d, dims=%dx%d",
-							texaddr, (u8)tex.get_extended_texture_dimension(), tex.width(), tex.height());
-				}
-				else
-				{
-					u32 bound_index = ~0U;
-
-					bool dst_is_compressed = (format == CELL_GCM_TEXTURE_COMPRESSED_DXT1 || format == CELL_GCM_TEXTURE_COMPRESSED_DXT23 || format == CELL_GCM_TEXTURE_COMPRESSED_DXT45);
-
-					if (!dst_is_compressed)
-					{
-						GLenum src_format = (GLenum)rsc.surface->get_internal_format();
-						GLenum dst_format = std::get<0>(get_format_type(format));
-
-						if (src_format != dst_format)
-						{
-							LOG_WARNING(RSX, "Sampling from a section of a render target, but formats might be incompatible (0x%X vs 0x%X)", src_format, dst_format);
-						}
-					}
-					else
-					{
-						LOG_WARNING(RSX, "Surface blit from a compressed texture");
-					}
-
-					if (!rsc.is_bound || !g_cfg.video.strict_rendering_mode)
-					{
-						if (rsc.w == tex_width && rsc.h == tex_height)
-						{
-							if (rsc.is_bound)
-							{
-								LOG_WARNING(RSX, "Sampling from a currently bound render target @ 0x%x", texaddr);
-
-								auto &caps = gl::get_driver_caps();
-								if (caps.ARB_texture_barrier_supported)
-									glTextureBarrier();
-								else if (caps.NV_texture_barrier_supported)
-									glTextureBarrierNV();
-							}
-
-							rsc.surface->bind();
-						}
-						else
-							bound_index = create_temporary_subresource(rsc.surface->id(), (GLenum)rsc.surface->get_compatible_internal_format(), rsc.x, rsc.y, rsc.w, rsc.h);
-					}
-					else
-					{
-						LOG_WARNING(RSX, "Attempting to sample a currently bound render target @ 0x%x", texaddr);
-						bound_index = create_temporary_subresource(rsc.surface->id(), (GLenum)rsc.surface->get_compatible_internal_format(), rsc.x, rsc.y, rsc.w, rsc.h);
-					}
-
-					if (bound_index)
-						return;
-				}
-			}
-
-			/**
-			 * If all the above failed, then its probably a generic texture.
-			 * Search in cache and upload/bind
-			 */
-
-			cached_texture_section *cached_texture = find_texture_from_dimensions(texaddr, tex_width, tex_height);
-			if (cached_texture)
-			{
-				verify(HERE), cached_texture->is_empty() == false;
-
-				gl_texture.set_id(cached_texture->id());
-				gl_texture.bind();
-
-				//external gl::texture objects should always be undefined/uninitialized!
-				gl_texture.set_id(0);
-				return;
-			}
-
-			/**
-			 * Check for subslices from the cache in case we only have a subset a larger texture
-			 */
-			cached_texture = find_texture_from_range(texaddr, range);
-			if (cached_texture)
-			{
-				const u32 address_offset = texaddr - cached_texture->get_section_base();
-				const u32 format = tex.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
-				const GLenum ifmt = gl::get_sized_internal_format(format);
-
-				u16 offset_x = 0, offset_y = 0;
-
-				if (address_offset)
-				{
-					const u32 bpp = get_format_block_size_in_bytes(format);
-
-					offset_y = address_offset / tex_pitch;
-					offset_x = address_offset % tex_pitch;
-
-					offset_x /= bpp;
-					offset_y /= bpp;
-				}
-
-				u32 texture_id = create_temporary_subresource(cached_texture->id(), ifmt, offset_x, offset_y, tex_width, tex_height);
-				if (texture_id) return;
-			}
-
-			gl_texture.init(index, tex);
-
-			cached_texture_section &cached = create_texture(gl_texture.id(), texaddr, (const u32)get_texture_size(tex), tex_width, tex_height);
-			
-			writer_lock lock(m_cache_mutex);
-			cached.protect(utils::protection::ro);
-			cached.set_dirty(false);
-
-			//external gl::texture objects should always be undefined/uninitialized!
+			auto id = upload_texture(unused, tex, m_rtts);
+			gl_texture.set_id(id);
+			gl_texture.bind();
 			gl_texture.set_id(0);
 		}
 	};

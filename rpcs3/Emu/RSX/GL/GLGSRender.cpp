@@ -477,7 +477,7 @@ void GLGSRender::end()
 		if (m_program->uniforms.has_location("tex" + std::to_string(i), &location))
 		{
 			m_gl_textures[i].set_target(get_gl_target_for_texture(rsx::method_registers.fragment_textures[i]));
-			__glcheck m_gl_texture_cache.upload_texture(i, rsx::method_registers.fragment_textures[i], m_gl_textures[i], m_rtts);
+			__glcheck m_gl_texture_cache.upload_and_bind_texture(i, rsx::method_registers.fragment_textures[i], m_gl_textures[i], m_rtts);
 			__glcheck m_gl_sampler_states[i].apply(rsx::method_registers.fragment_textures[i]);
 		}
 	}
@@ -498,7 +498,7 @@ void GLGSRender::end()
 		if (m_program->uniforms.has_location("vtex" + std::to_string(i), &location))
 		{
 			m_gl_vertex_textures[i].set_target(get_gl_target_for_texture(rsx::method_registers.vertex_textures[i]));
-			__glcheck m_gl_texture_cache.upload_texture(texture_index, rsx::method_registers.vertex_textures[i], m_gl_vertex_textures[i], m_rtts);
+			__glcheck m_gl_texture_cache.upload_and_bind_texture(texture_index, rsx::method_registers.vertex_textures[i], m_gl_vertex_textures[i], m_rtts);
 		}
 	}
 
@@ -1111,7 +1111,7 @@ void GLGSRender::flip(int buffer)
 
 	if (surface != nullptr)
 	{
-		m_flip_fbo.color = surface->id();
+		m_flip_fbo.color = surface->get_raw_view();
 		m_flip_fbo.read_buffer(m_flip_fbo.color);
 	}
 	else if (auto render_target_texture = m_rtts.get_texture_from_render_target_if_applicable(absolute_address))

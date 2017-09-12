@@ -17,6 +17,13 @@ namespace rsx
 	template <typename commandbuffer_type, typename section_storage_type, typename image_resource_type, typename image_view_type, typename image_storage_type, typename texture_format>
 	class texture_cache
 	{
+	private:
+		std::pair<std::array<u8, 4>, std::array<u8, 4>> default_remap_vector = 
+		{
+			{ CELL_GCM_TEXTURE_REMAP_FROM_A, CELL_GCM_TEXTURE_REMAP_FROM_R, CELL_GCM_TEXTURE_REMAP_FROM_G, CELL_GCM_TEXTURE_REMAP_FROM_B },
+			{ CELL_GCM_TEXTURE_REMAP_REMAP, CELL_GCM_TEXTURE_REMAP_REMAP, CELL_GCM_TEXTURE_REMAP_REMAP, CELL_GCM_TEXTURE_REMAP_REMAP }
+		};
+
 	protected:
 
 		struct ranged_storage
@@ -63,12 +70,14 @@ namespace rsx
 		
 		/* Helpers */
 		virtual void free_texture_section(section_storage_type&) = 0;
+		virtual image_view_type create_temporary_subresource_view(commandbuffer_type&, image_resource_type* src, u32 gcm_format, u16 x, u16 y, u16 w, u16 h) = 0;
 		virtual image_view_type create_temporary_subresource_view(commandbuffer_type&, image_storage_type* src, u32 gcm_format, u16 x, u16 y, u16 w, u16 h) = 0;
-		virtual image_resource_type create_new_texture(commandbuffer_type&, u32 rsx_address, u32 rsx_size, u16 width, u16 height, u16 depth, u16 mipmaps, const u32 gcm_format,
-				const rsx::texture_dimension_extended type, const texture_create_flags flags) = 0;
-		virtual image_resource_type upload_image_from_cpu(commandbuffer_type&, u32 rsx_address, u16 width, u16 height, u16 depth, u16 mipmaps, u16 pitch, const u32 gcm_format,
-				std::vector<rsx_subresource_layout>& subresource_layout, const rsx::texture_dimension_extended type, const bool swizzled, void* pixels) = 0;
+		virtual section_storage_type* create_new_texture(commandbuffer_type&, u32 rsx_address, u32 rsx_size, u16 width, u16 height, u16 depth, u16 mipmaps, const u32 gcm_format,
+				const rsx::texture_dimension_extended type, const texture_create_flags flags, std::pair<std::array<u8, 4>, std::array<u8, 4>>& remap_vector) = 0;
+		virtual section_storage_type* upload_image_from_cpu(commandbuffer_type&, u32 rsx_address, u16 width, u16 height, u16 depth, u16 mipmaps, u16 pitch, const u32 gcm_format,
+				std::vector<rsx_subresource_layout>& subresource_layout, const rsx::texture_dimension_extended type, const bool swizzled, std::pair<std::array<u8, 4>, std::array<u8, 4>>& remap_vector) = 0;
 		virtual void enforce_surface_creation_type(section_storage_type& section, const texture_create_flags expected) = 0;
+		virtual void insert_texture_barrier() = 0;
 
 	public:
 
@@ -541,6 +550,193 @@ namespace rsx
 			m_unreleased_texture_objects = 0;
 		}
 
+		template <typename RsxTextureType, typename surface_store_type>
+		image_view_type upload_texture(commandbuffer_type& cmd, RsxTextureType& tex, surface_store_type& m_rtts)
+		{
+			const u32 texaddr = rsx::get_address(tex.offset(), tex.location());
+			const u32 range = (u32)get_texture_size(tex);
+
+			const u32 format = tex.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
+			const u32 tex_width = tex.width();
+			const u32 tex_height = tex.height();
+			const u32 native_pitch = (tex_width * get_format_block_size_in_bytes(format));
+			const u32 tex_pitch = (tex.pitch() == 0) ? native_pitch : tex.pitch();
+
+			if (!texaddr || !range)
+			{
+				LOG_ERROR(RSX, "Texture upload requested but texture not found, (address=0x%X, size=0x%X)", texaddr, range);
+				return 0;
+			}
+
+			/**
+			* Check for sampleable rtts from previous render passes
+			*/
+			if (auto texptr = m_rtts.get_texture_from_render_target_if_applicable(texaddr))
+			{
+				for (const auto& tex : m_rtts.m_bound_render_targets)
+				{
+					if (std::get<0>(tex) == texaddr)
+					{
+						if (g_cfg.video.strict_rendering_mode)
+						{
+							LOG_WARNING(RSX, "Attempting to sample a currently bound render target @ 0x%x", texaddr);
+							create_temporary_subresource_view(cmd, texptr, format, 0, 0, texptr->width(), texptr->height());
+							return 0;
+						}
+						else
+						{
+							//issue a texture barrier to ensure previous writes are visible
+							insert_texture_barrier();
+							break;
+						}
+					}
+				}
+
+				return texptr->get_view();
+			}
+
+			if (auto texptr = m_rtts.get_texture_from_depth_stencil_if_applicable(texaddr))
+			{
+				if (texaddr == std::get<0>(m_rtts.m_bound_depth_stencil))
+				{
+					if (g_cfg.video.strict_rendering_mode)
+					{
+						LOG_WARNING(RSX, "Attempting to sample a currently bound depth surface @ 0x%x", texaddr);
+						create_temporary_subresource_view(cmd, texptr, format, 0, 0, texptr->width(), texptr->height());
+						return 0;
+					}
+					else
+					{
+						//issue a texture barrier to ensure previous writes are visible
+						insert_texture_barrier();
+					}
+				}
+
+				return texptr->get_view();
+			}
+
+			/**
+			* Check if we are re-sampling a subresource of an RTV/DSV texture, bound or otherwise
+			* (Turbo: Super Stunt Squad does this; bypassing the need for a sync object)
+			* The engine does not read back the texture resource through cell, but specifies a texture location that is
+			* a bound render target. We can bypass the expensive download in this case
+			*/
+
+			const f32 internal_scale = (f32)tex_pitch / native_pitch;
+			const u32 internal_width = (const u32)(tex_width * internal_scale);
+
+			const auto rsc = m_rtts.get_surface_subresource_if_applicable(texaddr, internal_width, tex_height, tex_pitch, true);
+			if (rsc.surface)
+			{
+				//TODO: Check that this region is not cpu-dirty before doing a copy
+				if (tex.get_extended_texture_dimension() != rsx::texture_dimension_extended::texture_dimension_2d)
+				{
+					LOG_ERROR(RSX, "Sampling of RTT region as non-2D texture! addr=0x%x, Type=%d, dims=%dx%d",
+						texaddr, (u8)tex.get_extended_texture_dimension(), tex.width(), tex.height());
+				}
+				else
+				{
+					image_view_type bound_surface = 0;
+
+					if (format == CELL_GCM_TEXTURE_COMPRESSED_DXT1 || format == CELL_GCM_TEXTURE_COMPRESSED_DXT23 || format == CELL_GCM_TEXTURE_COMPRESSED_DXT45)
+					{
+						LOG_WARNING(RSX, "Performing an RTT blit but request is for a compressed texture");
+					}
+
+					if (!rsc.is_bound || !g_cfg.video.strict_rendering_mode)
+					{
+						if (rsc.w == tex_width && rsc.h == tex_height)
+						{
+							if (rsc.is_bound)
+							{
+								LOG_WARNING(RSX, "Sampling from a currently bound render target @ 0x%x", texaddr);
+								insert_texture_barrier();
+							}
+
+							return rsc.surface->get_view();
+						}
+						else
+							bound_surface = create_temporary_subresource_view(cmd, rsc.surface, format, rsc.x, rsc.y, rsc.w, rsc.h);
+					}
+					else
+					{
+						LOG_WARNING(RSX, "Attempting to sample a currently bound render target @ 0x%x", texaddr);
+						bound_surface = create_temporary_subresource_view(cmd, rsc.surface, format, rsc.x, rsc.y, rsc.w, rsc.h);
+					}
+
+					if (bound_surface)
+						return bound_surface;
+				}
+			}
+
+			/**
+			* If all the above failed, then its probably a generic texture.
+			* Search in cache and upload/bind
+			*/
+
+			auto cached_texture = find_texture_from_dimensions(texaddr, tex_width, tex_height);
+			if (cached_texture)
+			{
+				return cached_texture->get_raw_view();
+			}
+
+			/**
+			* Check for subslices from the cache in case we only have a subset a larger texture
+			*/
+			cached_texture = find_texture_from_range(texaddr, range);
+			if (cached_texture)
+			{
+				const u32 address_offset = texaddr - cached_texture->get_section_base();
+				u16 offset_x = 0, offset_y = 0;
+
+				if (address_offset)
+				{
+					const u32 bpp = get_format_block_size_in_bytes(format);
+
+					offset_y = address_offset / tex_pitch;
+					offset_x = address_offset % tex_pitch;
+
+					offset_x /= bpp;
+					offset_y /= bpp;
+				}
+
+				image_resource_type src = cached_texture->get_raw_texture();
+				auto view = create_temporary_subresource_view(cmd, &src, format, offset_x, offset_y, tex_width, tex_height);
+				if (view) return view;
+			}
+
+			/**
+			* Do direct upload from CPU as the last resort
+			*/
+			const auto extended_dimension = tex.get_extended_texture_dimension();
+			u16 height = 0;
+			u16 depth = 0;
+
+			switch (extended_dimension)
+			{
+			case rsx::texture_dimension_extended::texture_dimension_1d:
+				height = 1;
+				depth = 1;
+				break;
+			case rsx::texture_dimension_extended::texture_dimension_2d:
+				height = tex_height;
+				depth = 1;
+				break;
+			case rsx::texture_dimension_extended::texture_dimension_cubemap:
+				height = tex_height;
+				depth = 1;
+				break;
+			case rsx::texture_dimension_extended::texture_dimension_3d:
+				height = tex_height;
+				depth = tex.depth();
+				break;
+			}
+
+			const bool is_swizzled = !(tex.format() & CELL_GCM_TEXTURE_LN);
+			return upload_image_from_cpu(cmd, texaddr, tex_width, height, depth, tex.get_exact_mipmap_count(), tex_pitch, format,
+				get_subresources_layout(tex), extended_dimension, is_swizzled, tex.decoded_remap())->get_raw_view();
+		}
+
 		template <typename surface_store_type, typename blitter_type, typename ...Args>
 		bool upload_scaled_image(rsx::blit_src_info& src, rsx::blit_dst_info& dst, bool interpolate, commandbuffer_type& cmd, surface_store_type& m_rtts, blitter_type& blitter, Args&&... extras)
 		{
@@ -698,7 +894,7 @@ namespace rsx
 
 					const u32 gcm_format = src_is_argb8 ? CELL_GCM_TEXTURE_A8R8G8B8 : CELL_GCM_TEXTURE_R5G6B5;
 					vram_texture = upload_image_from_cpu(cmd, src_address, src.width, src.slice_h, 1, 1, src.pitch, gcm_format,
-						subresource_layout, rsx::texture_dimension_extended::texture_dimension_2d, dst.swizzled, src.pixels);
+						subresource_layout, rsx::texture_dimension_extended::texture_dimension_2d, dst.swizzled, default_remap_vector)->get_raw_texture();
 				}
 			}
 			else
@@ -789,7 +985,8 @@ namespace rsx
 				dest_texture = create_new_texture(cmd, dst.rsx_address, dst.pitch * dst.clip_height,
 					dst_dimensions.width, dst_dimensions.height, 1, 1,
 					gcm_format, rsx::texture_dimension_extended::texture_dimension_2d,
-					dst.swizzled? rsx::texture_create_flags::swapped_native_component_order : rsx::texture_create_flags::native_component_order);
+					dst.swizzled? rsx::texture_create_flags::swapped_native_component_order : rsx::texture_create_flags::native_component_order,
+					default_remap_vector)->get_raw_texture();
 			}
 
 			blitter.scale_image(vram_texture, dest_texture, src_area, dst_area, interpolate, is_depth_blit);

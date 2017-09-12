@@ -113,6 +113,11 @@ namespace gl
 			return id();
 		}
 
+		u32 get_view() const
+		{
+			return id();
+		}
+
 		void set_compatible_format(texture::internal_format format)
 		{
 			compatible_internal_format = format;
