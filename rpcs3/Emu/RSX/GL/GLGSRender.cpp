@@ -1298,7 +1298,7 @@ void GLGSRender::synchronize_buffers()
 
 bool GLGSRender::scaled_image_from_memory(rsx::blit_src_info& src, rsx::blit_dst_info& dst, bool interpolate)
 {
-	return m_gl_texture_cache.upload_scaled_image(src, dst, interpolate, m_rtts);
+	return m_gl_texture_cache.blit(src, dst, interpolate, m_rtts);
 }
 
 void GLGSRender::check_zcull_status(bool framebuffer_swap, bool force_read)

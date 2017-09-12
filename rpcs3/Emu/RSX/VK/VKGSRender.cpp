@@ -638,6 +638,9 @@ VKGSRender::VKGSRender() : GSRender()
 
 	m_current_frame = &frame_context_storage[0];
 
+	m_texture_cache.initialize((*m_device), m_memory_type_mapping, m_optimal_tiling_supported_formats, m_swap_chain->get_present_queue(),
+			m_texture_upload_buffer_ring_info, m_texture_upload_buffer_ring_info.heap.get());
+
 	supports_multidraw = true;
 }
 
@@ -2586,6 +2589,5 @@ bool VKGSRender::scaled_image_from_memory(rsx::blit_src_info& src, rsx::blit_dst
 {
 	close_render_pass();
 
-	return m_texture_cache.upload_scaled_image(src, dst, interpolate, (*m_device), *m_current_command_buffer, m_memory_type_mapping,
-			m_swap_chain->get_present_queue(), m_rtts, m_texture_upload_buffer_ring_info, m_texture_upload_buffer_ring_info.heap.get());
+	return m_texture_cache.blit(src, dst, interpolate, m_rtts, *m_current_command_buffer);
 }

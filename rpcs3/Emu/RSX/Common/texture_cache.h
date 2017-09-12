@@ -7,7 +7,14 @@
 
 namespace rsx
 {
-	template <typename section_storage_type, typename image_view_type, typename image_storage_type, typename texture_format>
+	enum texture_create_flags
+	{
+		default_component_order = 0,
+		native_component_order = 1,
+		swapped_native_component_order = 2,
+	};
+
+	template <typename commandbuffer_type, typename section_storage_type, typename image_resource_type, typename image_view_type, typename image_storage_type, typename texture_format>
 	class texture_cache
 	{
 	protected:
@@ -54,7 +61,14 @@ namespace rsx
 		const s32 m_max_zombie_objects = 32; //Limit on how many texture objects to keep around for reuse after they are invalidated
 		s32 m_unreleased_texture_objects = 0; //Number of invalidated objects not yet freed from memory
 		
+		/* Helpers */
 		virtual void free_texture_section(section_storage_type&) = 0;
+		virtual image_view_type create_temporary_subresource_view(commandbuffer_type&, image_storage_type* src, u32 gcm_format, u16 x, u16 y, u16 w, u16 h) = 0;
+		virtual image_resource_type create_new_texture(commandbuffer_type&, u32 rsx_address, u32 rsx_size, u16 width, u16 height, u16 depth, u16 mipmaps, const u32 gcm_format,
+				const rsx::texture_dimension_extended type, const texture_create_flags flags) = 0;
+		virtual image_resource_type upload_image_from_cpu(commandbuffer_type&, u32 rsx_address, u16 width, u16 height, u16 depth, u16 mipmaps, u16 pitch, const u32 gcm_format,
+				std::vector<rsx_subresource_layout>& subresource_layout, const rsx::texture_dimension_extended type, const bool swizzled, void* pixels) = 0;
+		virtual void enforce_surface_creation_type(section_storage_type& section, const texture_create_flags expected) = 0;
 
 	public:
 
@@ -525,6 +539,261 @@ namespace rsx
 			}
 			
 			m_unreleased_texture_objects = 0;
+		}
+
+		template <typename surface_store_type, typename blitter_type, typename ...Args>
+		bool upload_scaled_image(rsx::blit_src_info& src, rsx::blit_dst_info& dst, bool interpolate, commandbuffer_type& cmd, surface_store_type& m_rtts, blitter_type& blitter, Args&&... extras)
+		{
+			//Since we will have dst in vram, we can 'safely' ignore the swizzle flag
+			//TODO: Verify correct behavior
+			bool is_depth_blit = false;
+			bool src_is_render_target = false;
+			bool dst_is_render_target = false;
+			bool dst_is_argb8 = (dst.format == rsx::blit_engine::transfer_destination_format::a8r8g8b8);
+			bool src_is_argb8 = (src.format == rsx::blit_engine::transfer_source_format::a8r8g8b8);
+
+			image_resource_type vram_texture = 0;
+			image_resource_type dest_texture = 0;
+
+			const u32 src_address = (u32)((u64)src.pixels - (u64)vm::base(0));
+			const u32 dst_address = (u32)((u64)dst.pixels - (u64)vm::base(0));
+
+			//Check if src/dst are parts of render targets
+			auto dst_subres = m_rtts.get_surface_subresource_if_applicable(dst.rsx_address, dst.width, dst.clip_height, dst.pitch, true, true, false);
+			dst_is_render_target = dst_subres.surface != nullptr;
+
+			//TODO: Handle cases where src or dst can be a depth texture while the other is a color texture - requires a render pass to emulate
+			auto src_subres = m_rtts.get_surface_subresource_if_applicable(src.rsx_address, src.width, src.height, src.pitch, true, true, false);
+			src_is_render_target = src_subres.surface != nullptr;
+
+			//Always use GPU blit if src or dst is in the surface store
+			if (!g_cfg.video.use_gpu_texture_scaling && !(src_is_render_target || dst_is_render_target))
+				return false;
+
+			u16 max_dst_width = dst.width;
+			u16 max_dst_height = dst.height;
+
+			float scale_x = dst.scale_x;
+			float scale_y = dst.scale_y;
+
+			size2i clip_dimensions = { dst.clip_width, dst.clip_height };
+
+			//Dimensions passed are restricted to powers of 2; get real height from clip_height and width from pitch
+			size2i dst_dimensions = { dst.pitch / (dst_is_argb8 ? 4 : 2), dst.clip_height };
+
+			//Offset in x and y for src is 0 (it is already accounted for when getting pixels_src)
+			//Reproject final clip onto source...
+			const u16 src_w = (const u16)((f32)clip_dimensions.width / dst.scale_x);
+			const u16 src_h = (const u16)((f32)clip_dimensions.height / dst.scale_y);
+
+			areai src_area = { 0, 0, src_w, src_h };
+			areai dst_area = { 0, 0, dst.clip_width, dst.clip_height };
+
+			//Check if trivial memcpy can perform the same task
+			//Used to copy programs to the GPU in some cases
+			bool is_memcpy = false;
+			u32 memcpy_bytes_length = 0;
+
+			if (dst_is_argb8 == src_is_argb8 && !dst.swizzled)
+			{
+				if ((src.slice_h == 1 && dst.clip_height == 1) ||
+					(dst.clip_width == src.width && dst.clip_height == src.slice_h && src.pitch == dst.pitch))
+				{
+					const u8 bpp = dst_is_argb8 ? 4 : 2;
+					is_memcpy = true;
+					memcpy_bytes_length = dst.clip_width * bpp * dst.clip_height;
+				}
+			}
+
+			section_storage_type* cached_dest = nullptr;
+			if (!dst_is_render_target)
+			{
+				//First check if this surface exists in VRAM with exact dimensions
+				//Since scaled GPU resources are not invalidated by the CPU, we need to reuse older surfaces if possible
+				cached_dest = find_texture_from_dimensions(dst.rsx_address, dst_dimensions.width, dst_dimensions.height);
+
+				//Check for any available region that will fit this one
+				if (!cached_dest) cached_dest = find_texture_from_range(dst.rsx_address, dst.pitch * dst.clip_height);
+
+				if (cached_dest)
+				{
+					//Prep surface
+					enforce_surface_creation_type(*cached_dest, dst.swizzled ? rsx::texture_create_flags::swapped_native_component_order : rsx::texture_create_flags::native_component_order);
+
+					//TODO: Verify that the new surface will fit
+					dest_texture = cached_dest->get_raw_texture();
+
+					//TODO: Move this code into utils since it is used alot
+					if (const u32 address_offset = dst.rsx_address - cached_dest->get_section_base())
+					{
+						const u16 bpp = dst_is_argb8 ? 4 : 2;
+						const u16 offset_y = address_offset / dst.pitch;
+						const u16 offset_x = address_offset % dst.pitch;
+						const u16 offset_x_in_block = offset_x / bpp;
+
+						dst_area.x1 += offset_x_in_block;
+						dst_area.x2 += offset_x_in_block;
+						dst_area.y1 += offset_y;
+						dst_area.y2 += offset_y;
+					}
+
+					max_dst_width = cached_dest->get_width();
+					max_dst_height = cached_dest->get_height();
+				}
+				else if (is_memcpy)
+				{
+					memcpy(dst.pixels, src.pixels, memcpy_bytes_length);
+					return true;
+				}
+			}
+			else
+			{
+				dst_area.x1 += dst_subres.x;
+				dst_area.x2 += dst_subres.x;
+				dst_area.y1 += dst_subres.y;
+				dst_area.y2 += dst_subres.y;
+
+				dest_texture = dst_subres.surface->get_surface();
+
+				max_dst_width = dst_subres.surface->get_surface_width();
+				max_dst_height = dst_subres.surface->get_surface_height();
+
+				if (is_memcpy)
+				{
+					//Some render target descriptions are actually invalid
+					//Confirm this is a flushable RTT
+					const auto rsx_pitch = dst_subres.surface->get_rsx_pitch();
+					const auto native_pitch = dst_subres.surface->get_native_pitch();
+
+					if (rsx_pitch <= 64 && native_pitch != rsx_pitch)
+					{
+						memcpy(dst.pixels, src.pixels, memcpy_bytes_length);
+						return true;
+					}
+				}
+			}
+
+			//Create source texture if does not exist
+			if (!src_is_render_target)
+			{
+				auto preloaded_texture = find_texture_from_dimensions(src_address, src.width, src.slice_h);
+
+				if (preloaded_texture != nullptr)
+				{
+					vram_texture = preloaded_texture->get_raw_texture();
+				}
+				else
+				{
+					flush_address(src.rsx_address, std::forward<Args>(extras)...);
+
+					const u16 pitch_in_block = src_is_argb8 ? src.pitch >> 2 : src.pitch >> 1;
+					std::vector<rsx_subresource_layout> subresource_layout;
+					rsx_subresource_layout subres = {};
+					subres.width_in_block = src.width;
+					subres.height_in_block = src.slice_h;
+					subres.pitch_in_bytes = pitch_in_block;
+					subres.depth = 1;
+					subres.data = { (const gsl::byte*)src.pixels, src.pitch * src.slice_h };
+					subresource_layout.push_back(subres);
+
+					const u32 gcm_format = src_is_argb8 ? CELL_GCM_TEXTURE_A8R8G8B8 : CELL_GCM_TEXTURE_R5G6B5;
+					vram_texture = upload_image_from_cpu(cmd, src_address, src.width, src.slice_h, 1, 1, src.pitch, gcm_format,
+						subresource_layout, rsx::texture_dimension_extended::texture_dimension_2d, dst.swizzled, src.pixels);
+				}
+			}
+			else
+			{
+				if (src_subres.w != clip_dimensions.width ||
+					src_subres.h != clip_dimensions.height)
+				{
+					f32 subres_scaling_x = (f32)src.pitch / src_subres.surface->get_native_pitch();
+
+					const int dst_width = (int)(src_subres.w * dst.scale_x * subres_scaling_x);
+					const int dst_height = (int)(src_subres.h * dst.scale_y);
+
+					dst_area.x2 = dst_area.x1 + dst_width;
+					dst_area.y2 = dst_area.y1 + dst_height;
+				}
+
+				src_area.x2 = src_subres.w;
+				src_area.y2 = src_subres.h;
+
+				src_area.x1 += src_subres.x;
+				src_area.x2 += src_subres.x;
+				src_area.y1 += src_subres.y;
+				src_area.y2 += src_subres.y;
+
+				if (src.compressed_y)
+				{
+					dst_area.y1 *= 2;
+					dst_area.y2 *= 2;
+
+					dst_dimensions.height *= 2;
+				}
+
+				vram_texture = src_subres.surface->get_surface();
+			}
+
+			bool format_mismatch = false;
+
+			if (src_subres.is_depth_surface)
+			{
+				if (dest_texture)
+				{
+					if (dst_is_render_target && !dst_subres.is_depth_surface)
+					{
+						LOG_ERROR(RSX, "Depth->RGBA blit requested but not supported");
+						return true;
+					}
+
+					if (!cached_dest->has_compatible_format(src_subres.surface))
+						format_mismatch = true;
+				}
+
+				is_depth_blit = true;
+			}
+
+			//TODO: Check for other types of format mismatch
+			if (format_mismatch)
+			{
+				invalidate_range(cached_dest->get_section_base(), cached_dest->get_section_size());
+
+				dest_texture = 0;
+				cached_dest = nullptr;
+			}
+
+			//Validate clipping region
+			if ((dst.offset_x + dst.clip_x + dst.clip_width) > max_dst_width) dst.clip_x = 0;
+			if ((dst.offset_y + dst.clip_y + dst.clip_height) > max_dst_height) dst.clip_y = 0;
+
+			//Reproject clip offsets onto source to simplify blit
+			if (dst.clip_x || dst.clip_y)
+			{
+				const u16 scaled_clip_offset_x = (const u16)((f32)dst.clip_x / dst.scale_x);
+				const u16 scaled_clip_offset_y = (const u16)((f32)dst.clip_y / dst.scale_y);
+
+				src_area.x1 += scaled_clip_offset_x;
+				src_area.x2 += scaled_clip_offset_x;
+				src_area.y1 += scaled_clip_offset_y;
+				src_area.y2 += scaled_clip_offset_y;
+			}
+
+			if (dest_texture == 0)
+			{
+				u32 gcm_format;
+				if (is_depth_blit)
+					gcm_format = (dst_is_argb8) ? CELL_GCM_TEXTURE_DEPTH24_D8 : CELL_GCM_TEXTURE_DEPTH16;
+				else
+					gcm_format = (dst_is_argb8) ? CELL_GCM_TEXTURE_A8R8G8B8 : CELL_GCM_TEXTURE_R5G6B5;
+
+				dest_texture = create_new_texture(cmd, dst.rsx_address, dst.pitch * dst.clip_height,
+					dst_dimensions.width, dst_dimensions.height, 1, 1,
+					gcm_format, rsx::texture_dimension_extended::texture_dimension_2d,
+					dst.swizzled? rsx::texture_create_flags::swapped_native_component_order : rsx::texture_create_flags::native_component_order);
+			}
+
+			blitter.scale_image(vram_texture, dest_texture, src_area, dst_area, interpolate, is_depth_blit);
+			return true;
 		}
 	};
 }

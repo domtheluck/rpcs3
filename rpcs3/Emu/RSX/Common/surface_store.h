@@ -43,6 +43,16 @@ namespace rsx
 		u8 bpp;
 	};
 
+	template <typename image_storage_type>
+	struct render_target_descriptor
+	{
+		virtual image_storage_type get_surface() const = 0;
+		virtual u16 get_surface_width() const = 0;
+		virtual u16 get_surface_height() const = 0;
+		virtual u16 get_rsx_pitch() const = 0;
+		virtual u16 get_native_pitch() const = 0;
+	};
+
 	/**
 	 * Helper for surface (ie color and depth stencil render target) management.
 	 * It handles surface creation and storage. Backend should only retrieve pointer to surface.

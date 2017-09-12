@@ -23,6 +23,8 @@ class GLGSRender;
 
 namespace gl
 {
+	extern GLenum get_sized_internal_format(u32);
+
 	class cached_texture_section : public rsx::buffered_section
 	{
 	private:
@@ -370,9 +372,14 @@ namespace gl
 			return vram_texture == 0;
 		}
 
-		const u32 id()
+		const u32 id() const
 		{
 			return vram_texture;
+		}
+
+		const u32 get_raw_texture() const
+		{
+			return id();
 		}
 
 		u32 get_width() const
@@ -389,9 +396,23 @@ namespace gl
 		{
 			return is_depth;
 		}
+
+		bool has_compatible_format(gl::texture* tex) const
+		{
+			GLenum fmt;
+			glBindTexture(GL_TEXTURE_2D, vram_texture);
+			glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, (GLint*)&fmt);
+
+			if (auto as_rtt = dynamic_cast<gl::render_target*>(tex))
+			{
+				return (GLenum)as_rtt->get_compatible_internal_format() == fmt;
+			}
+
+			return (gl::texture::format)fmt == tex->get_internal_format();
+		}
 	};
 		
-	class texture_cache : public rsx::texture_cache<cached_texture_section, void*, gl::texture, gl::texture::format>
+	class texture_cache : public rsx::texture_cache<void*, cached_texture_section, u32, u32, gl::texture, gl::texture::format>
 	{
 	private:
 	
@@ -414,23 +435,13 @@ namespace gl
 				blit_src.remove();
 			}
 
-			u32 scale_image(u32 src, u32 dst, const areai src_rect, const areai dst_rect, const GLenum dst_format, const position2i dst_offset, const position2i /*clip_offset*/,
-					const size2i dst_dims, const size2i clip_dims, bool /*is_argb8*/, bool is_depth_copy, bool linear_interpolation)
+			u32 scale_image(u32 src, u32 dst, const areai src_rect, const areai dst_rect, bool linear_interpolation, bool is_depth_copy)
 			{
 				s32 old_fbo = 0;
 				glGetIntegerv(GL_FRAMEBUFFER_BINDING, &old_fbo);
 				
 				u32 dst_tex = dst;
 				filter interp = linear_interpolation ? filter::linear : filter::nearest;
-
-				if (!dst_tex)
-				{
-					glGenTextures(1, &dst_tex);
-					glBindTexture(GL_TEXTURE_2D, dst_tex);
-					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-					glTexStorage2D(GL_TEXTURE_2D, 1, dst_format, dst_dims.width, dst_dims.height);
-				}
 
 				GLenum attachment = is_depth_copy ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0;
 
@@ -442,30 +453,11 @@ namespace gl
 				glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, dst_tex, 0);
 				blit_dst.check();
 
-				u32 src_width = src_rect.x2 - src_rect.x1;
-				u32 src_height = src_rect.y2 - src_rect.y1;
-				u32 dst_width = dst_rect.x2 - dst_rect.x1;
-				u32 dst_height = dst_rect.y2 - dst_rect.y1;
-
-				if (clip_dims.width != dst_width ||
-					clip_dims.height != dst_height)
-				{
-					//clip reproject
-					src_width = (src_width * clip_dims.width) / dst_width;
-					src_height = (src_height * clip_dims.height) / dst_height;
-				}
-
 				GLboolean scissor_test_enabled = glIsEnabled(GL_SCISSOR_TEST);
 				if (scissor_test_enabled)
 					glDisable(GL_SCISSOR_TEST);
 
-				areai dst_area = dst_rect;
-				dst_area.x1 += dst_offset.x;
-				dst_area.x2 += dst_offset.x;
-				dst_area.y1 += dst_offset.y;
-				dst_area.y2 += dst_offset.y;
-
-				blit_src.blit(blit_dst, src_rect, dst_area, is_depth_copy ? buffers::depth : buffers::color, interp);
+				blit_src.blit(blit_dst, src_rect, dst_rect, is_depth_copy ? buffers::depth : buffers::color, interp);
 
 				if (scissor_test_enabled)
 					glEnable(GL_SCISSOR_TEST);
@@ -552,6 +544,95 @@ namespace gl
 			tex.destroy();
 		}
 
+		u32 create_temporary_subresource_view(void*&, gl::texture* src, u32 gcm_format, u16 x, u16 y, u16 w, u16 h) override
+		{
+			if (auto as_rtt = dynamic_cast<gl::render_target*>(src))
+			{
+				return create_temporary_subresource(src->id(), (GLenum)as_rtt->get_compatible_internal_format(), x, y, w, h);
+			}
+			else
+			{
+				const GLenum ifmt = gl::get_sized_internal_format(gcm_format);
+				return create_temporary_subresource(src->id(), (GLenum)as_rtt->get_compatible_internal_format(), x, y, w, h);
+			}
+		}
+
+		u32 create_new_texture(void*&, u32 rsx_address, u32 rsx_size, u16 width, u16 height, u16 depth, u16 mipmaps, const u32 gcm_format,
+				const rsx::texture_dimension_extended type, const rsx::texture_create_flags flags) override
+		{
+			u32 vram_texture = 0;
+			bool depth_flag = false;
+
+			glGenTextures(1, &vram_texture);
+			glBindTexture(GL_TEXTURE_2D, vram_texture);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+			switch (gcm_format)
+			{
+			case CELL_GCM_TEXTURE_A8R8G8B8:
+				glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
+				break;
+			case CELL_GCM_TEXTURE_R5G6B5:
+				glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB565, width, height);
+				break;
+			case CELL_GCM_TEXTURE_DEPTH24_D8:
+				glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, width, height);
+				depth_flag = true;
+				break;
+			case CELL_GCM_TEXTURE_DEPTH16:
+				glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH_COMPONENT16, width, height);
+				depth_flag = true;
+				break;
+			}
+
+			auto& cached = create_texture(vram_texture, rsx_address, rsx_size, width, height);
+			cached.protect(utils::protection::ro);
+			cached.set_dirty(false);
+			cached.set_depth_flag(depth_flag);
+
+			return vram_texture;
+		}
+
+		u32 upload_image_from_cpu(void*&, u32 rsx_address, u16 width, u16 height, u16 depth, u16 mipmaps, u16 pitch, const u32 gcm_format,
+			std::vector<rsx_subresource_layout>& subresource_layout, const rsx::texture_dimension_extended type, const bool swizzled, void *pixels) override
+		{
+			void* unused = nullptr;
+			u32 vram_texture = create_new_texture(unused, rsx_address, pitch * height, width, height, depth, mipmaps, gcm_format, type, rsx::texture_create_flags::default_component_order);
+
+			GLenum view_fmt;
+			GLenum data_type;
+			GLboolean swap_bytes;
+			GLint bpp;
+
+			switch (gcm_format)
+			{
+			case CELL_GCM_TEXTURE_A8R8G8B8:
+				view_fmt = (swizzled) ? GL_RGBA : GL_BGRA;
+				data_type = GL_UNSIGNED_INT_8_8_8_8;
+				swap_bytes = (GLboolean)swizzled;
+				bpp = 4;
+			case CELL_GCM_TEXTURE_R5G6B5:
+				view_fmt = GL_RGB;
+				data_type = GL_UNSIGNED_SHORT_5_6_5;
+				swap_bytes = GL_TRUE;
+				bpp = 2;
+			}
+
+			const GLint unpack_row_length = pitch / bpp;
+			glBindTexture(GL_TEXTURE_2D, vram_texture);
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			glPixelStorei(GL_UNPACK_SWAP_BYTES, swap_bytes);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, view_fmt, data_type, pixels);
+
+			return vram_texture;
+		}
+
+		void enforce_surface_creation_type(cached_texture_section& section, const rsx::texture_create_flags flags) override
+		{
+		}
+
 	public:
 
 		texture_cache() {}
@@ -585,6 +666,12 @@ namespace gl
 			}
 			
 			clear_temporary_subresources();
+		}
+
+		bool blit(rsx::blit_src_info& src, rsx::blit_dst_info& dst, bool linear_interpolate, gl_render_targets& m_rtts)
+		{
+			void* unused = nullptr;
+			return upload_scaled_image(src, dst, linear_interpolate, unused, m_rtts, m_hw_blitter);
 		}
 
 		template<typename RsxTextureType>
@@ -796,303 +883,6 @@ namespace gl
 
 			//external gl::texture objects should always be undefined/uninitialized!
 			gl_texture.set_id(0);
-		}
-
-		bool upload_scaled_image(rsx::blit_src_info& src, rsx::blit_dst_info& dst, bool interpolate, gl_render_targets &m_rtts)
-		{
-			//Since we will have dst in vram, we can 'safely' ignore the swizzle flag
-			//TODO: Verify correct behavior
-			bool is_depth_blit = false;
-			bool src_is_render_target = false;
-			bool dst_is_render_target = false;
-			bool dst_is_argb8 = (dst.format == rsx::blit_engine::transfer_destination_format::a8r8g8b8);
-			bool src_is_argb8 = (src.format == rsx::blit_engine::transfer_source_format::a8r8g8b8);
-
-			GLenum src_gl_sized_format = src_is_argb8? GL_RGBA8: GL_RGB565;
-			GLenum src_gl_format = src_is_argb8 ? GL_BGRA : GL_RGB;
-			GLenum src_gl_type = src_is_argb8? GL_UNSIGNED_INT_8_8_8_8: GL_UNSIGNED_SHORT_5_6_5;
-
-			u32 vram_texture = 0;
-			u32 dest_texture = 0;
-
-			const u32 src_address = (u32)((u64)src.pixels - (u64)vm::base(0));
-			const u32 dst_address = (u32)((u64)dst.pixels - (u64)vm::base(0));
-
-			//Account for rasterization offsets for RGBA render targets - RSX insets raster area by 8 or 16 pixels depending on compression mode
-			const u32 src_raster_offset_x = src.compressed_x ? 16 : 8;
-			const u32 src_raster_offset_y = src.compressed_y ? 16 : 8;
-			const u32 dst_raster_offset_x = dst.compressed_x ? 16 : 8;
-			const u32 dst_raster_offset_y = dst.compressed_y ? 16 : 8;
-
-			u32 src_raster_offset = src_is_argb8 ? (src.pitch * src_raster_offset_y + src_raster_offset_x * 4) : 0;
-			u32 dst_raster_offset = dst_is_argb8 ? (dst.pitch * dst_raster_offset_y + dst_raster_offset_y * 4) : 0;
-
-			//Check if src/dst are parts of render targets
-			auto dst_subres = m_rtts.get_surface_subresource_if_applicable(dst_address - dst_raster_offset, dst.width, dst.clip_height, dst.pitch, true, true, false);
-			dst_is_render_target = dst_subres.surface != nullptr;
-
-			//TODO: Handle cases where src or dst can be a depth texture while the other is a color texture - requires a render pass to emulate
-			auto src_subres = m_rtts.get_surface_subresource_if_applicable(src_address - src_raster_offset, src.width, src.height, src.pitch, true, true, false);
-			src_is_render_target = src_subres.surface != nullptr;
-
-			//Always use GPU blit if src or dst is in the surface store
-			if (!g_cfg.video.use_gpu_texture_scaling && !(src_is_render_target || dst_is_render_target))
-				return false;
-
-			u16 max_dst_width = dst.width;
-			u16 max_dst_height = dst.height;
-
-			//Prepare areas and offsets
-			//Copy from [src.offset_x, src.offset_y] a region of [clip.width, clip.height]
-			//Stretch onto [dst.offset_x, y] with clipping performed on the source region
-			//The implementation here adds the inverse scaled clip dimensions onto the source to completely bypass final clipping step
-			float scale_x = dst.scale_x;
-			float scale_y = dst.scale_y;
-
-			//Clip offset is unused if the clip offsets are reprojected onto the source
-			position2i clip_offset = { 0, 0 };//{ dst.clip_x, dst.clip_y };
-			position2i dst_offset = { dst.offset_x, dst.offset_y };
-
-			size2i clip_dimensions = { dst.clip_width, dst.clip_height };
-			//Dimensions passed are restricted to powers of 2; get real height from clip_height and width from pitch
-			size2i dst_dimensions = { dst.pitch / (dst_is_argb8 ? 4 : 2), dst.clip_height };
-
-			//Offset in x and y for src is 0 (it is already accounted for when getting pixels_src)
-			//Reproject final clip onto source...
-			const u16 src_w = (const u16)((f32)clip_dimensions.width / dst.scale_x);
-			const u16 src_h = (const u16)((f32)clip_dimensions.height / dst.scale_y);
-
-			areai src_area = { 0, 0, src_w, src_h };
-			areai dst_area = { 0, 0, dst.clip_width, dst.clip_height };
-
-			//If destination is neither a render target nor an existing texture in VRAM
-			//its possible that this method is being used to perform a memcpy into RSX memory, so we check
-			//parameters. Whenever a simple memcpy can get the job done, use it instead.
-			//Dai-3-ji Super Robot Taisen for example uses this to copy program code to GPU RAM
-			
-			bool is_memcpy = false;
-			u32 memcpy_bytes_length = 0;
-			
-			if (dst_is_argb8 == src_is_argb8 && !dst.swizzled)
-			{
-				if ((src.slice_h == 1 && dst.clip_height == 1) ||
-					(dst.clip_width == src.width && dst.clip_height == src.slice_h && src.pitch == dst.pitch))
-				{
-					const u8 bpp = dst_is_argb8 ? 4 : 2;
-					is_memcpy = true;
-					memcpy_bytes_length = dst.clip_width * bpp * dst.clip_height;
-				}
-			}
-
-			cached_texture_section* cached_dest = nullptr;
-			if (!dst_is_render_target)
-			{
-				//First check if this surface exists in VRAM with exact dimensions
-				//Since scaled GPU resources are not invalidated by the CPU, we need to reuse older surfaces if possible
-				cached_dest = find_texture_from_dimensions(dst.rsx_address, dst_dimensions.width, dst_dimensions.height);
-
-				//Check for any available region that will fit this one
-				if (!cached_dest) cached_dest = find_texture_from_range(dst.rsx_address, dst.pitch * dst.clip_height);
-
-				if (cached_dest)
-				{
-					//TODO: Verify that the new surface will fit
-					dest_texture = cached_dest->id();
-
-					//TODO: Move this code into utils since it is used alot
-					const u32 address_offset = dst.rsx_address - cached_dest->get_section_base();
-
-					const u16 bpp = dst_is_argb8 ? 4 : 2;
-					const u16 offset_y = address_offset / dst.pitch;
-					const u16 offset_x = address_offset % dst.pitch;
-
-					dst_offset.x += offset_x / bpp;
-					dst_offset.y += offset_y;
-
-					max_dst_width = cached_dest->get_width();
-					max_dst_height = cached_dest->get_height();
-				}
-				else if (is_memcpy)
-				{
-					memcpy(dst.pixels, src.pixels, memcpy_bytes_length);
-					return true;
-				}
-			}
-			else
-			{
-				dst_offset.x = dst_subres.x;
-				dst_offset.y = dst_subres.y;
-
-				dest_texture = dst_subres.surface->id();
-
-				auto dims = dst_subres.surface->get_dimensions();
-				max_dst_width = dims.first;
-				max_dst_height = dims.second;
-
-				if (is_memcpy)
-				{
-					//Some render target descriptions are actually invalid
-					//Confirm this is a flushable RTT
-					const auto rsx_pitch = dst_subres.surface->get_rsx_pitch();
-					const auto native_pitch = dst_subres.surface->get_native_pitch();
-
-					if (rsx_pitch <= 64 && native_pitch != rsx_pitch)
-					{
-						memcpy(dst.pixels, src.pixels, memcpy_bytes_length);
-						return true;
-					}
-				}
-			}
-
-			//Create source texture if does not exist
-			if (!src_is_render_target)
-			{
-				auto preloaded_texture = find_texture_from_dimensions(src_address, src.width, src.slice_h);
-
-				if (preloaded_texture != nullptr)
-				{
-					vram_texture = preloaded_texture->id();
-				}
-				else
-				{
-					flush_address(src_address);
-
-					GLboolean swap_bytes = !src_is_argb8;
-					if (dst.swizzled)
-					{
-						//TODO: Check results against 565 textures
-						if (src_is_argb8)
-						{
-							src_gl_format = GL_RGBA;
-							swap_bytes = true;
-						}
-						else
-						{
-							LOG_ERROR(RSX, "RGB565 swizzled texture upload found");
-						}
-					}
-
-					glGenTextures(1, &vram_texture);
-					glBindTexture(GL_TEXTURE_2D, vram_texture);
-					glTexStorage2D(GL_TEXTURE_2D, 1, src_gl_sized_format, src.width, src.slice_h);
-					glPixelStorei(GL_UNPACK_ROW_LENGTH, src.pitch / (src_is_argb8 ? 4 : 2));
-					glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-					glPixelStorei(GL_UNPACK_SWAP_BYTES, swap_bytes);
-					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-					glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, src.width, src.slice_h, src_gl_format, src_gl_type, src.pixels);
-					
-					auto &section = create_texture(vram_texture, src_address, src.pitch * src.slice_h, src.width, src.slice_h);
-					writer_lock lock(m_cache_mutex);
-
-					section.protect(utils::protection::ro);
-					section.set_dirty(false);
-				}
-			}
-			else
-			{
-				if (src_subres.w != clip_dimensions.width ||
-					src_subres.h != clip_dimensions.height)
-				{
-					f32 subres_scaling_x = (f32)src.pitch / src_subres.surface->get_native_pitch();
-					
-					dst_area.x2 = (int)(src_subres.w * dst.scale_x * subres_scaling_x);
-					dst_area.y2 = (int)(src_subres.h * dst.scale_y);
-				}
-
-				src_area.x2 = src_subres.w;				
-				src_area.y2 = src_subres.h;
-
-				src_area.x1 += src_subres.x;
-				src_area.x2 += src_subres.x;
-				src_area.y1 += src_subres.y;
-				src_area.y2 += src_subres.y;
-
-				if (src.compressed_y)
-				{
-					dst_area.y1 *= 2;
-					dst_area.y2 *= 2;
-
-					dst_dimensions.height *= 2;
-				}
-
-				vram_texture = src_subres.surface->id();
-			}
-
-			bool format_mismatch = false;
-
-			if (src_subres.is_depth_surface)
-			{
-				if (dest_texture)
-				{
-					if (dst_is_render_target && !dst_subres.is_depth_surface)
-					{
-						LOG_ERROR(RSX, "Depth->RGBA blit requested but not supported");
-						return true;
-					}
-
-					GLenum internal_fmt;
-					glBindTexture(GL_TEXTURE_2D, dest_texture);
-					glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, (GLint*)&internal_fmt);
-
-					if (internal_fmt != (GLenum)src_subres.surface->get_compatible_internal_format())
-						format_mismatch = true;
-				}
-
-				is_depth_blit = true;
-			}
-			
-			//TODO: Check for other types of format mismatch
-			if (format_mismatch)
-			{
-				invalidate_range(cached_dest->get_section_base(), cached_dest->get_section_size());
-				
-				dest_texture = 0;
-				cached_dest = nullptr;
-			}
-
-			//Validate clip offsets (Persona 4 Arena at 720p)
-			//Check if can fit
-			//NOTE: It is possible that the check is simpler (if (clip_x >= clip_width))
-			//Needs verification
-			if ((dst.offset_x + dst.clip_x + dst.clip_width) > max_dst_width) dst.clip_x = 0;
-			if ((dst.offset_y + dst.clip_y + dst.clip_height) > max_dst_height) dst.clip_y = 0;
-
-			if (dst.clip_x || dst.clip_y)
-			{
-				//Reproject clip offsets onto source
-				const u16 scaled_clip_offset_x = (const u16)((f32)dst.clip_x / dst.scale_x);
-				const u16 scaled_clip_offset_y = (const u16)((f32)dst.clip_y / dst.scale_y);
-
-				src_area.x1 += scaled_clip_offset_x;
-				src_area.x2 += scaled_clip_offset_x;
-				src_area.y1 += scaled_clip_offset_y;
-				src_area.y2 += scaled_clip_offset_y;
-			}
-
-			GLenum dst_format = (is_depth_blit) ? (GLenum)src_subres.surface->get_compatible_internal_format() : (dst_is_argb8) ? GL_RGBA8 : GL_RGB565;
-			u32 texture_id = m_hw_blitter.scale_image(vram_texture, dest_texture, src_area, dst_area, dst_format, dst_offset, clip_offset,
-					dst_dimensions, clip_dimensions, dst_is_argb8, is_depth_blit, interpolate);
-
-			if (dest_texture)
-				return true;
-
-			//TODO: Verify if any titles ever scale into CPU memory. It defeats the purpose of uploading data to the GPU, but it could happen
-			//If so, add this texture to the no_access queue not the read_only queue
-			const u8 bpp = dst_is_argb8 ? 4 : 2;
-			const u32 real_width = dst.pitch / bpp;
-			cached_texture_section &cached = create_texture(texture_id, dst.rsx_address, dst.pitch * dst.clip_height, real_width, dst_dimensions.height);
-			
-			writer_lock lock(m_cache_mutex);
-			
-			//These textures are completely GPU resident so we dont watch for CPU access
-			//There's no data to be fetched from the CPU
-			//Its is possible for a title to attempt to read from the region, but the CPU path should be used in such cases
-			cached.protect(utils::protection::ro);
-			cached.set_dirty(false);
-			cached.set_depth_flag(is_depth_blit);
-
-			return true;
 		}
 	};
 }
