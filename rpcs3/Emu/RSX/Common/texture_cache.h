@@ -775,15 +775,12 @@ namespace rsx
 				cached_dest = find_texture_from_dimensions(dst.rsx_address, dst_dimensions.width, dst_dimensions.height);
 
 				//Check for any available region that will fit this one
-				if (!cached_dest) cached_dest = find_texture_from_range(dst.rsx_address, dst.pitch * dst.clip_height);
+				if (!cached_dest) cached_dest = find_texture_from_range(dst_address, dst.pitch * dst.clip_height);
 
 				if (cached_dest)
 				{
 					//Prep surface
 					enforce_surface_creation_type(*cached_dest, dst.swizzled ? rsx::texture_create_flags::swapped_native_component_order : rsx::texture_create_flags::native_component_order);
-
-					//TODO: Verify that the new surface will fit
-					dest_texture = cached_dest->get_raw_texture();
 
 					//TODO: Move this code into utils since it is used alot
 					if (const u32 address_offset = dst.rsx_address - cached_dest->get_section_base())
@@ -799,10 +796,20 @@ namespace rsx
 						dst_area.y2 += offset_y;
 					}
 
-					max_dst_width = cached_dest->get_width();
-					max_dst_height = cached_dest->get_height();
+					//Validate clipping region
+					if ((unsigned)dst_area.x2 <= cached_dest->get_width() &&
+						(unsigned)dst_area.y2 <= cached_dest->get_height())
+					{
+						dest_texture = cached_dest->get_raw_texture();
+
+						max_dst_width = cached_dest->get_width();
+						max_dst_height = cached_dest->get_height();
+					}
+					else
+						cached_dest = nullptr;
 				}
-				else if (is_memcpy)
+
+				if (!cached_dest && is_memcpy)
 				{
 					memcpy(dst.pixels, src.pixels, memcpy_bytes_length);
 					return true;
