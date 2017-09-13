@@ -699,8 +699,11 @@ namespace rsx
 			}
 
 			const bool is_swizzled = !(tex.format() & CELL_GCM_TEXTURE_LN);
+			auto subresources_layout = get_subresources_layout(tex);
+			auto remap_vector = tex.decoded_remap();
+
 			return upload_image_from_cpu(cmd, texaddr, tex_width, height, depth, tex.get_exact_mipmap_count(), tex_pitch, format,
-				get_subresources_layout(tex), extended_dimension, is_swizzled, tex.decoded_remap())->get_raw_view();
+				subresources_layout, extended_dimension, is_swizzled, remap_vector)->get_raw_view();
 		}
 
 		template <typename surface_store_type, typename blitter_type, typename ...Args>
