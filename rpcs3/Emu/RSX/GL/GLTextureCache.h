@@ -566,28 +566,13 @@ namespace gl
 		cached_texture_section* create_new_texture(void*&, u32 rsx_address, u32 rsx_size, u16 width, u16 height, u16 depth, u16 mipmaps, const u32 gcm_format,
 				const rsx::texture_dimension_extended type, const rsx::texture_create_flags flags, std::pair<std::array<u8, 4>, std::array<u8, 4>>& remap_vector) override
 		{
-			u32 vram_texture = 0;
+			u32 vram_texture = gl::create_texture(gcm_format, width, height, depth, mipmaps, type);
 			bool depth_flag = false;
-
-			glGenTextures(1, &vram_texture);
-			glBindTexture(GL_TEXTURE_2D, vram_texture);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
 			switch (gcm_format)
 			{
-			case CELL_GCM_TEXTURE_A8R8G8B8:
-				glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
-				break;
-			case CELL_GCM_TEXTURE_R5G6B5:
-				glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB565, width, height);
-				break;
 			case CELL_GCM_TEXTURE_DEPTH24_D8:
-				glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, width, height);
-				depth_flag = true;
-				break;
 			case CELL_GCM_TEXTURE_DEPTH16:
-				glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH_COMPONENT16, width, height);
 				depth_flag = true;
 				break;
 			}
@@ -608,32 +593,7 @@ namespace gl
 			auto section = create_new_texture(unused, rsx_address, pitch * height, width, height, depth, mipmaps, gcm_format, type,
 				rsx::texture_create_flags::default_component_order, remap_vector);
 
-			GLenum view_fmt;
-			GLenum data_type;
-			GLboolean swap_bytes;
-			GLint bpp;
-
-			switch (gcm_format)
-			{
-			case CELL_GCM_TEXTURE_A8R8G8B8:
-				view_fmt = (swizzled) ? GL_RGBA : GL_BGRA;
-				data_type = GL_UNSIGNED_INT_8_8_8_8;
-				swap_bytes = (GLboolean)swizzled;
-				bpp = 4;
-			case CELL_GCM_TEXTURE_R5G6B5:
-				view_fmt = GL_RGB;
-				data_type = GL_UNSIGNED_SHORT_5_6_5;
-				swap_bytes = GL_TRUE;
-				bpp = 2;
-			}
-
-			const GLint unpack_row_length = pitch / bpp;
-			glBindTexture(GL_TEXTURE_2D, section->get_raw_texture());
-			glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
-			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-			glPixelStorei(GL_UNPACK_SWAP_BYTES, swap_bytes);
-			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, view_fmt, data_type, subresource_layout.front().data.data());
-
+			gl::upload_texture(section->get_raw_texture(), rsx_address, gcm_format, width, height, depth, mipmaps, pitch, swizzled, type, subresource_layout, remap_vector, false);
 			return section;
 		}
 
@@ -693,15 +653,13 @@ namespace gl
 		}
 
 		template<typename RsxTextureType>
-		void upload_and_bind_texture(int index, RsxTextureType &tex, rsx::gl::texture &gl_texture, gl_render_targets &m_rtts)
+		void upload_and_bind_texture(int index, GLenum target, RsxTextureType &tex, gl_render_targets &m_rtts)
 		{
-			glActiveTexture(index);
+			glActiveTexture(GL_TEXTURE0 + index);
 			void* unused = nullptr;
 
 			auto id = upload_texture(unused, tex, m_rtts);
-			gl_texture.set_id(id);
-			gl_texture.bind();
-			gl_texture.set_id(0);
+			glBindTexture(target, id);
 		}
 	};
 }

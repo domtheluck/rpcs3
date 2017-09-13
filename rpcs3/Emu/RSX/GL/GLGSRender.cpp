@@ -463,22 +463,12 @@ void GLGSRender::end()
 	{
 		int location;
 		if (!rsx::method_registers.fragment_textures[i].enabled())
-		{
-			if (m_textures_dirty[i])
-			{
-				glActiveTexture(GL_TEXTURE0 + i);
-				glBindTexture(GL_TEXTURE_2D, 0);
-
-				m_textures_dirty[i] = false;
-			}
 			continue;
-		}
 
 		if (m_program->uniforms.has_location("tex" + std::to_string(i), &location))
 		{
-			m_gl_textures[i].set_target(get_gl_target_for_texture(rsx::method_registers.fragment_textures[i]));
-			__glcheck m_gl_texture_cache.upload_and_bind_texture(i, rsx::method_registers.fragment_textures[i], m_gl_textures[i], m_rtts);
-			__glcheck m_gl_sampler_states[i].apply(rsx::method_registers.fragment_textures[i]);
+			m_gl_texture_cache.upload_and_bind_texture(i, get_gl_target_for_texture(rsx::method_registers.fragment_textures[i]), rsx::method_registers.fragment_textures[i], m_rtts);
+			m_gl_sampler_states[i].apply(rsx::method_registers.fragment_textures[i]);
 		}
 	}
 
@@ -489,16 +479,11 @@ void GLGSRender::end()
 		int location;
 
 		if (!rsx::method_registers.vertex_textures[i].enabled())
-		{
-			//glActiveTexture(GL_TEXTURE0 + texture_index);
-			//glBindTexture(GL_TEXTURE_2D, 0);
 			continue;
-		}
 
 		if (m_program->uniforms.has_location("vtex" + std::to_string(i), &location))
 		{
-			m_gl_vertex_textures[i].set_target(get_gl_target_for_texture(rsx::method_registers.vertex_textures[i]));
-			__glcheck m_gl_texture_cache.upload_and_bind_texture(texture_index, rsx::method_registers.vertex_textures[i], m_gl_vertex_textures[i], m_rtts);
+			m_gl_texture_cache.upload_and_bind_texture(texture_index, GL_TEXTURE_2D, rsx::method_registers.vertex_textures[i], m_rtts);
 		}
 	}
 
