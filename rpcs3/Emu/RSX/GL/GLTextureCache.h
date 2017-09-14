@@ -306,7 +306,6 @@ namespace gl
 
 			glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 			glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-			protect(utils::protection::ro);
 			
 			return true;
 		}

@@ -34,12 +34,14 @@ namespace rsx
 
 			void notify(u32 data_size)
 			{
+				verify(HERE), valid_count >= 0;
 				max_range = std::max(data_size, max_range);
 				valid_count++;
 			}
 
 			void add(section_storage_type& section, u32 data_size)
 			{
+				verify(HERE), valid_count >= 0;
 				max_range = std::max(data_size, max_range);
 				valid_count++;
 
@@ -84,7 +86,7 @@ namespace rsx
 		bool invalidate_range_impl(u32 address, u32 range, bool unprotect)
 		{
 			bool response = false;
-			std::unordered_map<u32, bool> processed_ranges;
+			u32 last_dirty_block = 0;
 			std::pair<u32, u32> trampled_range = std::make_pair(address, address + range);
 
 			for (auto It = m_cache.begin(); It != m_cache.end(); It++)
@@ -93,18 +95,11 @@ namespace rsx
 				const u32 base = It->first;
 				bool range_reset = false;
 
-				if (processed_ranges[base] || range_data.valid_count == 0)
+				if (base == last_dirty_block && range_data.valid_count == 0)
 					continue;
 
-				//Quickly discard range
-				const u32 lock_base = base & ~0xfff;
-				const u32 lock_limit = align(range_data.max_range + base, 4096);
-
-				if (trampled_range.first >= lock_limit || lock_base >= trampled_range.second)
-				{
-					processed_ranges[base] = true;
+				if (trampled_range.first >= (base + get_block_size()) || base >= trampled_range.second)
 					continue;
-				}
 
 				for (int i = 0; i < range_data.data.size(); i++)
 				{
@@ -144,11 +139,9 @@ namespace rsx
 
 				if (range_reset)
 				{
-					processed_ranges.clear();
+					last_dirty_block = base;
 					It = m_cache.begin();
 				}
-
-				processed_ranges[base] = true;
 			}
 
 			return response;
@@ -158,7 +151,7 @@ namespace rsx
 		bool flush_address_impl(u32 address, Args&&... extras)
 		{
 			bool response = false;
-			std::unordered_map<u32, bool> processed_ranges;
+			u32 last_dirty_block = 0;
 			std::pair<u32, u32> trampled_range = std::make_pair(0xffffffff, 0x0);
 
 			for (auto It = m_cache.begin(); It != m_cache.end(); It++)
@@ -167,19 +160,11 @@ namespace rsx
 				const u32 base = It->first;
 				bool range_reset = false;
 
-				if (processed_ranges[base] || range_data.valid_count == 0)
+				if (base == last_dirty_block && range_data.valid_count == 0)
 					continue;
 
-				//Quickly discard range
-				const u32 lock_base = base & ~0xfff;
-				const u32 lock_limit = align(range_data.max_range + base, 4096);
-
-				if ((trampled_range.first >= lock_limit || lock_base >= trampled_range.second) &&
-					(lock_base > address || lock_limit <= address))
-				{
-					processed_ranges[base] = true;
+				if (trampled_range.first >= (base + get_block_size()) || base >= trampled_range.second)
 					continue;
-				}
 
 				for (int i = 0; i < range_data.data.size(); i++)
 				{
@@ -210,20 +195,21 @@ namespace rsx
 						}
 
 						response = true;
+						range_data.valid_count--;
 					}
 				}
 
 				if (range_reset)
 				{
-					processed_ranges.clear();
 					It = m_cache.begin();
 				}
-
-				processed_ranges[base] = true;
 			}
 
 			return response;
 		}
+
+		constexpr u32 get_block_size() const { return 0x1000000; }
+		inline u32 get_block_address(u32 address) const { return (address & ~0xFFFFFF);  }
 
 	public:
 
@@ -239,7 +225,9 @@ namespace rsx
 			auto test = std::make_pair(rsx_address, range);
 			for (auto &address_range : m_cache)
 			{
+				if (address_range.second.valid_count == 0) continue;
 				auto &range_data = address_range.second;
+
 				for (auto &tex : range_data.data)
 				{
 					if (tex.get_section_base() > rsx_address)
@@ -255,7 +243,7 @@ namespace rsx
 
 		section_storage_type *find_texture_from_dimensions(u32 rsx_address, u16 width = 0, u16 height = 0, u16 mipmaps = 0)
 		{
-			auto found = m_cache.find(rsx_address);
+			auto found = m_cache.find(get_block_address(rsx_address));
 			if (found != m_cache.end())
 			{
 				auto &range_data = found->second;
@@ -273,7 +261,9 @@ namespace rsx
 
 		section_storage_type& find_cached_texture(u32 rsx_address, u32 rsx_size, bool confirm_dimensions = false, u16 width = 0, u16 height = 0, u16 mipmaps = 0)
 		{
-			auto found = m_cache.find(rsx_address);
+			const u32 block_address = get_block_address(rsx_address);
+
+			auto found = m_cache.find(block_address);
 			if (found != m_cache.end())
 			{
 				auto &range_data = found->second;
@@ -311,13 +301,13 @@ namespace rsx
 			}
 
 			section_storage_type tmp;
-			m_cache[rsx_address].add(tmp, rsx_size);
-			return m_cache[rsx_address].data.back();
+			m_cache[block_address].add(tmp, rsx_size);
+			return m_cache[block_address].data.back();
 		}
 
 		section_storage_type* find_flushable_section(const u32 address, const u32 range)
 		{
-			auto found = m_cache.find(address);
+			auto found = m_cache.find(get_block_address(address));
 			if (found != m_cache.end())
 			{
 				auto &range_data = found->second;
@@ -395,7 +385,7 @@ namespace rsx
 
 			reader_lock lock(m_cache_mutex);
 
-			auto found = m_cache.find(address);
+			auto found = m_cache.find(get_block_address(address));
 			if (found != m_cache.end())
 			{
 				auto &range_data = found->second;
