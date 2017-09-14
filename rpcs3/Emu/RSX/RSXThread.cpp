@@ -400,9 +400,11 @@ namespace rsx
 		auto flush_command_queue = [&]()
 		{
 			const auto num_draws = method_registers.current_draw_clause.first_count_commands.size();
+			bool emit_begin = false;
+			bool emit_end = true;
+
 			if (num_draws > 1)
 			{
-				bool emit_begin = false;
 				auto& first_counts = method_registers.current_draw_clause.first_count_commands;
 				deferred_stack.resize(0);
 
@@ -443,9 +445,12 @@ namespace rsx
 						methods[NV4097_SET_BEGIN_END](this, NV4097_SET_BEGIN_END, 0);
 						last_index = draw;
 					}
+
+					emit_end = false;
 				}
 			}
-			else
+
+			if (emit_end)
 				methods[NV4097_SET_BEGIN_END](this, NV4097_SET_BEGIN_END, 0);
 
 			deferred_primitive_type = 0;
