@@ -14,6 +14,12 @@ namespace rsx
 		swapped_native_component_order = 2,
 	};
 
+	enum texture_upload_context
+	{
+		shader_read = 0,
+		blit_engine_src = 1
+	};
+
 	template <typename commandbuffer_type, typename section_storage_type, typename image_resource_type, typename image_view_type, typename image_storage_type, typename texture_format>
 	class texture_cache
 	{
@@ -76,7 +82,7 @@ namespace rsx
 		virtual image_view_type create_temporary_subresource_view(commandbuffer_type&, image_storage_type* src, u32 gcm_format, u16 x, u16 y, u16 w, u16 h) = 0;
 		virtual section_storage_type* create_new_texture(commandbuffer_type&, u32 rsx_address, u32 rsx_size, u16 width, u16 height, u16 depth, u16 mipmaps, const u32 gcm_format,
 				const rsx::texture_dimension_extended type, const texture_create_flags flags, std::pair<std::array<u8, 4>, std::array<u8, 4>>& remap_vector) = 0;
-		virtual section_storage_type* upload_image_from_cpu(commandbuffer_type&, u32 rsx_address, u16 width, u16 height, u16 depth, u16 mipmaps, u16 pitch, const u32 gcm_format,
+		virtual section_storage_type* upload_image_from_cpu(commandbuffer_type&, u32 rsx_address, u16 width, u16 height, u16 depth, u16 mipmaps, u16 pitch, const u32 gcm_format, const texture_upload_context context,
 				std::vector<rsx_subresource_layout>& subresource_layout, const rsx::texture_dimension_extended type, const bool swizzled, std::pair<std::array<u8, 4>, std::array<u8, 4>>& remap_vector) = 0;
 		virtual void enforce_surface_creation_type(section_storage_type& section, const texture_create_flags expected) = 0;
 		virtual void insert_texture_barrier() = 0;
@@ -703,7 +709,7 @@ namespace rsx
 			auto remap_vector = tex.decoded_remap();
 
 			return upload_image_from_cpu(cmd, texaddr, tex_width, height, depth, tex.get_exact_mipmap_count(), tex_pitch, format,
-				subresources_layout, extended_dimension, is_swizzled, remap_vector)->get_raw_view();
+				texture_upload_context::shader_read, subresources_layout, extended_dimension, is_swizzled, remap_vector)->get_raw_view();
 		}
 
 		template <typename surface_store_type, typename blitter_type, typename ...Args>
@@ -880,8 +886,8 @@ namespace rsx
 					subresource_layout.push_back(subres);
 
 					const u32 gcm_format = src_is_argb8 ? CELL_GCM_TEXTURE_A8R8G8B8 : CELL_GCM_TEXTURE_R5G6B5;
-					vram_texture = upload_image_from_cpu(cmd, src_address, src.width, src.slice_h, 1, 1, src.pitch, gcm_format,
-						subresource_layout, rsx::texture_dimension_extended::texture_dimension_2d, false, default_remap_vector)->get_raw_texture();
+					vram_texture = upload_image_from_cpu(cmd, src_address, src.width, src.slice_h, 1, 1, src.pitch, gcm_format, texture_upload_context::blit_engine_src,
+						subresource_layout, rsx::texture_dimension_extended::texture_dimension_2d, dst.swizzled, default_remap_vector)->get_raw_texture();
 				}
 			}
 			else

@@ -333,7 +333,7 @@ namespace gl
 	}
 
 	void fill_texture(rsx::texture_dimension_extended dim, u16 mipmap_count, int format, u16 width, u16 height, u16 depth,
-			const std::vector<rsx_subresource_layout> &input_layouts, bool is_swizzled, std::vector<gsl::byte> staging_buffer)
+			const std::vector<rsx_subresource_layout> &input_layouts, bool is_swizzled, GLenum gl_format, GLenum gl_type, std::vector<gsl::byte> staging_buffer)
 	{
 		int mip_level = 0;
 		if (is_compressed_format(format))
@@ -349,11 +349,10 @@ namespace gl
 			glTexStorage1D(GL_TEXTURE_1D, mipmap_count, get_sized_internal_format(format), width);
 			if (!is_compressed_format(format))
 			{
-				const auto &format_type = get_format_type(format);
 				for (const rsx_subresource_layout &layout : input_layouts)
 				{
 					upload_texture_subresource(staging_buffer, layout, format, is_swizzled, 4);
-					glTexSubImage1D(GL_TEXTURE_1D, mip_level++, 0, layout.width_in_block, std::get<0>(format_type), std::get<1>(format_type), staging_buffer.data());
+					glTexSubImage1D(GL_TEXTURE_1D, mip_level++, 0, layout.width_in_block, gl_format, gl_type, staging_buffer.data());
 				}
 			}
 			else
@@ -372,11 +371,10 @@ namespace gl
 		{
 			if (!is_compressed_format(format))
 			{
-				const auto &format_type = get_format_type(format);
 				for (const rsx_subresource_layout &layout : input_layouts)
 				{
 					upload_texture_subresource(staging_buffer, layout, format, is_swizzled, 4);
-					glTexSubImage2D(GL_TEXTURE_2D, mip_level++, 0, 0, layout.width_in_block, layout.height_in_block, std::get<0>(format_type), std::get<1>(format_type), staging_buffer.data());
+					glTexSubImage2D(GL_TEXTURE_2D, mip_level++, 0, 0, layout.width_in_block, layout.height_in_block, gl_format, gl_type, staging_buffer.data());
 				}
 			}
 			else
@@ -398,11 +396,10 @@ namespace gl
 			// mip_level % mipmap_per_layer will always be equal to mip_level
 			if (!is_compressed_format(format))
 			{
-				const auto &format_type = get_format_type(format);
 				for (const rsx_subresource_layout &layout : input_layouts)
 				{
 					upload_texture_subresource(staging_buffer, layout, format, is_swizzled, 4);
-					glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + mip_level / mipmap_count, mip_level % mipmap_count, 0, 0, layout.width_in_block, layout.height_in_block, std::get<0>(format_type), std::get<1>(format_type), staging_buffer.data());
+					glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + mip_level / mipmap_count, mip_level % mipmap_count, 0, 0, layout.width_in_block, layout.height_in_block, gl_format, gl_type, staging_buffer.data());
 					mip_level++;
 				}
 			}
@@ -423,11 +420,10 @@ namespace gl
 		{
 			if (!is_compressed_format(format))
 			{
-				const auto &format_type = get_format_type(format);
 				for (const rsx_subresource_layout &layout : input_layouts)
 				{
 					upload_texture_subresource(staging_buffer, layout, format, is_swizzled, 4);
-					glTexSubImage3D(GL_TEXTURE_3D, mip_level++, 0, 0, 0, layout.width_in_block, layout.height_in_block, depth, std::get<0>(format_type), std::get<1>(format_type), staging_buffer.data());
+					glTexSubImage3D(GL_TEXTURE_3D, mip_level++, 0, 0, 0, layout.width_in_block, layout.height_in_block, depth, gl_format, gl_type, staging_buffer.data());
 				}
 			}
 			else
@@ -529,6 +525,9 @@ namespace gl
 
 		//The rest of sampler state is now handled by sampler state objects
 
-		fill_texture(type, mipmaps, gcm_format, width, height, depth, subresources_layout, is_swizzled, data_upload_buf);
+		const auto format_type = get_format_type(gcm_format);
+		const GLenum gl_format = std::get<0>(format_type);
+		const GLenum gl_type = std::get<1>(format_type);
+		fill_texture(type, mipmaps, gcm_format, width, height, depth, subresources_layout, is_swizzled, gl_format, gl_type, data_upload_buf);
 	}
 }
