@@ -415,8 +415,9 @@ namespace rsx
 					{
 						//Disjoint
 						deferred_stack.push_back(draw);
-						last = first_counts[draw].first + first_counts[draw].second;
 					}
+
+					last = first_counts[draw].first + first_counts[draw].second;
 				}
 
 				if (deferred_stack.size() > 0)
