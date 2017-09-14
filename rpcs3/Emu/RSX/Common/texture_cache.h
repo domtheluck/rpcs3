@@ -104,7 +104,7 @@ namespace rsx
 				if (base == last_dirty_block && range_data.valid_count == 0)
 					continue;
 
-				if (trampled_range.first >= (base + get_block_size()) || base >= trampled_range.second)
+				if (trampled_range.first >= (base + range_data.max_range + get_block_size()) || base >= trampled_range.second)
 					continue;
 
 				for (int i = 0; i < range_data.data.size(); i++)
@@ -169,7 +169,7 @@ namespace rsx
 				if (base == last_dirty_block && range_data.valid_count == 0)
 					continue;
 
-				if (trampled_range.first >= (base + get_block_size()) || base >= trampled_range.second)
+				if (trampled_range.first >= (base + range_data.max_range + get_block_size()) || base >= trampled_range.second)
 					continue;
 
 				for (int i = 0; i < range_data.data.size(); i++)
@@ -334,7 +334,7 @@ namespace rsx
 		void lock_memory_region(image_storage_type* image, const u32 memory_address, const u32 memory_size, const u32 width, const u32 height, const u32 pitch, Args&&... extras)
 		{
 			writer_lock lock(m_cache_mutex);
-			section_storage_type& region = find_cached_texture(memory_address, memory_size, true, width, height, 1);
+			section_storage_type& region = find_cached_texture(memory_address, memory_size, false);
 
 			if (!region.is_locked())
 			{
@@ -730,11 +730,11 @@ namespace rsx
 			const u32 dst_address = (u32)((u64)dst.pixels - (u64)vm::base(0));
 
 			//Check if src/dst are parts of render targets
-			auto dst_subres = m_rtts.get_surface_subresource_if_applicable(dst.rsx_address, dst.width, dst.clip_height, dst.pitch, true, true, false);
+			auto dst_subres = m_rtts.get_surface_subresource_if_applicable(dst.rsx_address, dst.width, dst.clip_height, dst.pitch, true, true, false, dst.compressed_y);
 			dst_is_render_target = dst_subres.surface != nullptr;
 
 			//TODO: Handle cases where src or dst can be a depth texture while the other is a color texture - requires a render pass to emulate
-			auto src_subres = m_rtts.get_surface_subresource_if_applicable(src.rsx_address, src.width, src.height, src.pitch, true, true, false);
+			auto src_subres = m_rtts.get_surface_subresource_if_applicable(src.rsx_address, src.width, src.slice_h, src.pitch, true, true, false, src.compressed_y);
 			src_is_render_target = src_subres.surface != nullptr;
 
 			//Always use GPU blit if src or dst is in the surface store
@@ -747,15 +747,28 @@ namespace rsx
 			float scale_x = dst.scale_x;
 			float scale_y = dst.scale_y;
 
-			size2i clip_dimensions = { dst.clip_width, dst.clip_height };
+			//TODO: Investigate effects of compression in X axis
+			if (dst.compressed_y)
+			{
+				scale_y *= 0.5f;
+			}
 
-			//Dimensions passed are restricted to powers of 2; get real height from clip_height and width from pitch
-			size2i dst_dimensions = { dst.pitch / (dst_is_argb8 ? 4 : 2), dst.clip_height };
+			if (src.compressed_y)
+			{
+				scale_y *= 2.f;
+			}
+
+			//720 height is a hack (for 720p buffers)
+			//Real dimension will likely be a power of 2 such as 1024, using 720 to minimize trampling over other textures
+			//It is possible to have a large buffer that goes up to around 4kx4k but anything above 1280x720 is rare
+			//RSX only handles 512x512 tiles so texture 'stitching' will eventually be needed to be completely accurate
+			int practical_height = src_is_render_target ? std::max((s32)dst.height, 720) : dst.height;
+			size2i dst_dimensions = { dst.pitch / (dst_is_argb8 ? 4 : 2), practical_height };
 
 			//Offset in x and y for src is 0 (it is already accounted for when getting pixels_src)
 			//Reproject final clip onto source...
-			const u16 src_w = (const u16)((f32)clip_dimensions.width / dst.scale_x);
-			const u16 src_h = (const u16)((f32)clip_dimensions.height / dst.scale_y);
+			const u16 src_w = (const u16)((f32)dst.clip_width / scale_x);
+			const u16 src_h = (const u16)((f32)dst.clip_height / scale_y);
 
 			areai src_area = { 0, 0, src_w, src_h };
 			areai dst_area = { 0, 0, dst.clip_width, dst.clip_height };
@@ -892,13 +905,13 @@ namespace rsx
 			}
 			else
 			{
-				if (src_subres.w != clip_dimensions.width ||
-					src_subres.h != clip_dimensions.height)
+				if (src_subres.w != dst.clip_width ||
+					src_subres.h != dst.clip_height)
 				{
 					f32 subres_scaling_x = (f32)src.pitch / src_subres.surface->get_native_pitch();
 
-					const int dst_width = (int)(src_subres.w * dst.scale_x * subres_scaling_x);
-					const int dst_height = (int)(src_subres.h * dst.scale_y);
+					const int dst_width = (int)(src_subres.w * scale_x * subres_scaling_x);
+					const int dst_height = (int)(src_subres.h * scale_y);
 
 					dst_area.x2 = dst_area.x1 + dst_width;
 					dst_area.y2 = dst_area.y1 + dst_height;
@@ -911,14 +924,6 @@ namespace rsx
 				src_area.x2 += src_subres.x;
 				src_area.y1 += src_subres.y;
 				src_area.y2 += src_subres.y;
-
-				if (src.compressed_y)
-				{
-					dst_area.y1 *= 2;
-					dst_area.y2 *= 2;
-
-					dst_dimensions.height *= 2;
-				}
 
 				vram_texture = src_subres.surface->get_surface();
 			}
@@ -959,8 +964,8 @@ namespace rsx
 			//Reproject clip offsets onto source to simplify blit
 			if (dst.clip_x || dst.clip_y)
 			{
-				const u16 scaled_clip_offset_x = (const u16)((f32)dst.clip_x / dst.scale_x);
-				const u16 scaled_clip_offset_y = (const u16)((f32)dst.clip_y / dst.scale_y);
+				const u16 scaled_clip_offset_x = (const u16)((f32)dst.clip_x / scale_x);
+				const u16 scaled_clip_offset_y = (const u16)((f32)dst.clip_y / scale_y);
 
 				src_area.x1 += scaled_clip_offset_x;
 				src_area.x2 += scaled_clip_offset_x;
@@ -978,7 +983,7 @@ namespace rsx
 
 				lock.upgrade();
 
-				dest_texture = create_new_texture(cmd, dst.rsx_address, dst.pitch * dst.clip_height,
+				dest_texture = create_new_texture(cmd, dst.rsx_address, dst.pitch * dst_dimensions.height,
 					dst_dimensions.width, dst_dimensions.height, 1, 1,
 					gcm_format, rsx::texture_dimension_extended::texture_dimension_2d,
 					dst.swizzled? rsx::texture_create_flags::swapped_native_component_order : rsx::texture_create_flags::native_component_order,
