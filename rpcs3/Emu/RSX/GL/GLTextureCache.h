@@ -630,6 +630,8 @@ namespace gl
 		
 		bool is_depth_texture(const u32 rsx_address) override
 		{
+			reader_lock lock(m_cache_mutex);
+
 			auto section = find_texture_from_range(rsx_address, 64u);
 			if (section != nullptr) return section->is_depth_texture();
 
