@@ -53,6 +53,12 @@ namespace rsx
 
 				data.push_back(std::move(section));
 			}
+
+			void remove_one()
+			{
+				verify(HERE), valid_count > 0;
+				valid_count--;
+			}
 		};
 
 		// Keep track of cache misses to pre-emptively flush some addresses
@@ -138,7 +144,7 @@ namespace rsx
 						}
 
 						m_unreleased_texture_objects++;
-						range_data.valid_count--;
+						range_data.remove_one();
 						response = true;
 					}
 				}
@@ -201,7 +207,7 @@ namespace rsx
 						}
 
 						response = true;
-						range_data.valid_count--;
+						range_data.remove_one();
 					}
 				}
 
@@ -758,11 +764,20 @@ namespace rsx
 				scale_y *= 2.f;
 			}
 
-			//720 height is a hack (for 720p buffers)
-			//Real dimension will likely be a power of 2 such as 1024, using 720 to minimize trampling over other textures
+			//1024 height is a hack (for ~720p buffers)
 			//It is possible to have a large buffer that goes up to around 4kx4k but anything above 1280x720 is rare
 			//RSX only handles 512x512 tiles so texture 'stitching' will eventually be needed to be completely accurate
-			int practical_height = src_is_render_target ? std::max((s32)dst.height, 720) : dst.height;
+			//Sections will be submitted as (512x512 + 512x512 + 256x512 + 512x208 + 512x208 + 256x208) to blit a 720p surface to the backbuffer for example
+
+			int practical_height;
+			if (dst.max_tile_h < dst.height || !src_is_render_target)
+				practical_height = (s32)dst.height;
+			else
+			{
+				//Hack
+				practical_height = std::min((s32)dst.max_tile_h, 1024);
+			}
+
 			size2i dst_dimensions = { dst.pitch / (dst_is_argb8 ? 4 : 2), practical_height };
 
 			//Offset in x and y for src is 0 (it is already accounted for when getting pixels_src)

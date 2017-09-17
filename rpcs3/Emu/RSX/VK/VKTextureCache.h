@@ -699,6 +699,25 @@ namespace vk
 					VkImageAspectFlagBits aspect = VK_IMAGE_ASPECT_COLOR_BIT;
 					if (is_depth) aspect = (VkImageAspectFlagBits)(src->info.format == VK_FORMAT_D16_UNORM ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
 
+					//Checks
+					if (src_area.x2 <= src_area.x1 || src_area.y2 <= src_area.y1 || dst_area.x2 <= dst_area.x1 || dst_area.y2 <= dst_area.y1)
+					{
+						LOG_ERROR(RSX, "Blit request consists of an empty region descriptor!");
+						return;
+					}
+
+					if (src_area.x1 < 0 || src_area.x2 > (s32)src->width() || src_area.y1 < 0 || src_area.y2 > (s32)src->height())
+					{
+						LOG_ERROR(RSX, "Blit request denied because the source region does not fit!");
+						return;
+					}
+
+					if (dst_area.x1 < 0 || dst_area.x2 > (s32)dst->width() || dst_area.y1 < 0 || dst_area.y2 > (s32)dst->height())
+					{
+						LOG_ERROR(RSX, "Blit request denied because the destination region does not fit!");
+						return;
+					}
+
 					copy_scaled_image(*commands, src->value, dst->value, src->current_layout, dst->current_layout, src_area.x1, src_area.y1, src_area.x2 - src_area.x1, src_area.y2 - src_area.y1,
 						dst_area.x1, dst_area.y1, dst_area.x2 - dst_area.x1, dst_area.y2 - dst_area.y1, 1, aspect);
 
