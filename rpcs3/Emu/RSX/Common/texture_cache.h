@@ -837,7 +837,7 @@ namespace rsx
 					enforce_surface_creation_type(*cached_dest, dst.swizzled ? rsx::texture_create_flags::swapped_native_component_order : rsx::texture_create_flags::native_component_order);
 
 					const auto old_dst_area = dst_area;
-					if (const u32 address_offset = dst.rsx_address - cached_dest->get_section_base())
+					if (const u32 address_offset = dst_address - cached_dest->get_section_base())
 					{
 						const u16 bpp = dst_is_argb8 ? 4 : 2;
 						const u16 offset_y = address_offset / dst.pitch;
