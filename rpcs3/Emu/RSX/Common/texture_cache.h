@@ -169,6 +169,7 @@ namespace rsx
 			bool response = false;
 			u32 last_dirty_block = 0;
 			std::pair<u32, u32> trampled_range = std::make_pair(0xffffffff, 0x0);
+			std::vector<section_storage_type*> sections_to_flush;
 
 			for (auto It = m_cache.begin(); It != m_cache.end(); It++)
 			{
@@ -206,13 +207,9 @@ namespace rsx
 							range_reset = true;
 						}
 
-						//TODO: Map basic host_visible memory without coherent constraint
-						if (!tex.flush(std::forward<Args>(extras)...))
-						{
-							//Missed address, note this
-							//TODO: Lower severity when successful to keep the cache from overworking
-							record_cache_miss(tex);
-						}
+						//Defer actual flush operation until all affected regions are cleared to prevent recursion
+						tex.unprotect();
+						sections_to_flush.push_back(&tex);
 
 						response = true;
 						range_data.remove_one();
@@ -222,6 +219,16 @@ namespace rsx
 				if (range_reset)
 				{
 					It = m_cache.begin();
+				}
+			}
+
+			for (auto tex : sections_to_flush)
+			{
+				if (!tex->flush(std::forward<Args>(extras)...))
+				{
+					//Missed address, note this
+					//TODO: Lower severity when successful to keep the cache from overworking
+					record_cache_miss(*tex);
 				}
 			}
 

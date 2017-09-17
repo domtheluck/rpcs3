@@ -183,16 +183,7 @@ namespace vk
 
 			if (manage_cb_lifetime)
 			{
-				//cb has to be guaranteed to be in a closed state
-				//This function can be called asynchronously
-				VkCommandBufferInheritanceInfo inheritance_info = {};
-				inheritance_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO;
-
-				VkCommandBufferBeginInfo begin_infos = {};
-				begin_infos.pInheritanceInfo = &inheritance_info;
-				begin_infos.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-				begin_infos.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-				CHECK_RESULT(vkBeginCommandBuffer(cmd, &begin_infos));
+				cmd.begin();
 			}
 
 			VkBufferImageCopy copyRegion = {};
@@ -212,20 +203,8 @@ namespace vk
 
 			if (manage_cb_lifetime)
 			{
-				CHECK_RESULT(vkEndCommandBuffer(cmd));
-
-				VkPipelineStageFlags pipe_stage_flags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-				VkCommandBuffer command_buffer = cmd;
-
-				VkSubmitInfo infos = {};
-				infos.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-				infos.commandBufferCount = 1;
-				infos.pCommandBuffers = &command_buffer;
-				infos.pWaitDstStageMask = &pipe_stage_flags;
-				infos.pWaitSemaphores = nullptr;
-				infos.waitSemaphoreCount = 0;
-
-				CHECK_RESULT(vkQueueSubmit(submit_queue, 1, &infos, dma_fence));
+				cmd.end();
+				cmd.submit(submit_queue, {}, dma_fence, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
 
 				//Now we need to restart the command-buffer to restore it to the way it was before...
 				CHECK_RESULT(vkWaitForFences(*m_device, 1, &dma_fence, VK_TRUE, UINT64_MAX));
