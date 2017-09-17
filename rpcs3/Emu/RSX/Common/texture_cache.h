@@ -403,7 +403,7 @@ namespace rsx
 				address > no_access_range.second)
 				return std::make_tuple(false, nullptr);
 
-			reader_lock lock(m_cache_mutex);
+			rsx::conditional_lock<shared_mutex> lock(in_access_violation_handler, m_cache_mutex);
 
 			auto found = m_cache.find(get_block_address(address));
 			if (found != m_cache.end())
@@ -862,6 +862,7 @@ namespace rsx
 				if (!cached_dest && is_memcpy)
 				{
 					lock.upgrade();
+					flush_address_impl(src_address, std::forward<Args>(extras)...);
 					invalidate_range_impl(dst_address, memcpy_bytes_length, true);
 					memcpy(dst.pixels, src.pixels, memcpy_bytes_length);
 					return true;
@@ -889,6 +890,7 @@ namespace rsx
 					if (rsx_pitch <= 64 && native_pitch != rsx_pitch)
 					{
 						lock.upgrade();
+						flush_address_impl(src_address, std::forward<Args>(extras)...);
 						invalidate_range_impl(dst_address, memcpy_bytes_length, true);
 						memcpy(dst.pixels, src.pixels, memcpy_bytes_length);
 						return true;
