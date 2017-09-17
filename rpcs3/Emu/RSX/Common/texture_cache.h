@@ -110,8 +110,12 @@ namespace rsx
 				if (base == last_dirty_block && range_data.valid_count == 0)
 					continue;
 
-				if (trampled_range.first >= (base + range_data.max_range + get_block_size()) || base >= trampled_range.second)
-					continue;
+				if (trampled_range.first < trampled_range.second)
+				{
+					//Only if a valid range, ignore empty sets
+					if (trampled_range.first >= (base + range_data.max_range + get_block_size()) || base >= trampled_range.second)
+						continue;
+				}
 
 				for (int i = 0; i < range_data.data.size(); i++)
 				{
@@ -175,8 +179,12 @@ namespace rsx
 				if (base == last_dirty_block && range_data.valid_count == 0)
 					continue;
 
-				if (trampled_range.first >= (base + range_data.max_range + get_block_size()) || base >= trampled_range.second)
-					continue;
+				if (trampled_range.first < trampled_range.second)
+				{
+					//Only if a valid range, ignore empty sets
+					if (trampled_range.first >= (base + range_data.max_range + get_block_size()) || base >= trampled_range.second)
+						continue;
+				}
 
 				for (int i = 0; i < range_data.data.size(); i++)
 				{
