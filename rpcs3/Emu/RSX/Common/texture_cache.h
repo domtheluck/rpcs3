@@ -170,7 +170,7 @@ namespace rsx
 		bool invalidate_range_impl(u32 address, u32 range, bool unprotect)
 		{
 			bool response = false;
-			u32 last_dirty_block = 0;
+			u32 last_dirty_block = UINT32_MAX;
 			std::pair<u32, u32> trampled_range = std::make_pair(address, address + range);
 
 			for (auto It = m_cache.begin(); It != m_cache.end(); It++)
@@ -239,7 +239,7 @@ namespace rsx
 		bool flush_address_impl(u32 address, Args&&... extras)
 		{
 			bool response = false;
-			u32 last_dirty_block = 0;
+			u32 last_dirty_block = UINT32_MAX;
 			std::pair<u32, u32> trampled_range = std::make_pair(0xffffffff, 0x0);
 			std::vector<section_storage_type*> sections_to_flush;
 
@@ -372,10 +372,13 @@ namespace rsx
 				{
 					if (tex.matches(rsx_address, rsx_size) && !tex.is_dirty())
 					{
-						if (!confirm_dimensions) return tex;
+						if (!confirm_dimensions || tex.matches(rsx_address, width, height, mipmaps))
+						{
+							if (!tex.is_locked())
+								range_data.notify(rsx_size);
 
-						if (tex.matches(rsx_address, width, height, mipmaps))
 							return tex;
+						}
 						else
 						{
 							LOG_ERROR(RSX, "Cached object for address 0x%X was found, but it does not match stored parameters.", rsx_address);

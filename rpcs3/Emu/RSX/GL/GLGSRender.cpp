@@ -1248,7 +1248,7 @@ void GLGSRender::do_local_task()
 		//Check if the suggested section is valid
 		if (!q.section_to_flush->is_flushed())
 		{
-			q.section_to_flush->flush();
+			m_gl_texture_cache.flush_address(q.address_to_flush);
 			q.result = true;
 		}
 		else
