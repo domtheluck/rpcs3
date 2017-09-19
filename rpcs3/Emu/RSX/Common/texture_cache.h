@@ -141,7 +141,6 @@ namespace rsx
 			texture_format format;
 		};
 
-		std::atomic_bool in_access_violation_handler = { false };
 		shared_mutex m_cache_mutex;
 		std::unordered_map<u32, ranged_storage> m_cache;
 
@@ -486,7 +485,7 @@ namespace rsx
 				address > no_access_range.second)
 				return std::make_tuple(false, nullptr);
 
-			rsx::conditional_lock<shared_mutex> lock(in_access_violation_handler, m_cache_mutex);
+			reader_lock lock(m_cache_mutex);
 
 			auto found = m_cache.find(get_block_address(address));
 			if (found != m_cache.end())
@@ -536,7 +535,7 @@ namespace rsx
 				address > no_access_range.second)
 				return false;
 
-			rsx::conditional_lock<shared_mutex> lock(in_access_violation_handler, m_cache_mutex);
+			writer_lock lock(m_cache_mutex);
 			return flush_address_impl(address, std::forward<Args>(extras)...);
 		}
 
@@ -558,7 +557,7 @@ namespace rsx
 					return false;
 			}
 
-			rsx::conditional_lock<shared_mutex> lock(in_access_violation_handler, m_cache_mutex);
+			writer_lock lock(m_cache_mutex);
 			return invalidate_range_impl(address, range, unprotect);
 		}
 
