@@ -1075,8 +1075,7 @@ namespace rsx
 		current_vertex_program.skip_vertex_input_check = false;
 
 		current_vertex_program.rsx_vertex_inputs.resize(0);
-		current_vertex_program.data.resize(512 * 4);
-		current_vertex_program.rsx_vertex_inputs.reserve(rsx::limits::vertex_count);
+		current_vertex_program.data.resize((512 - transform_program_start) * 4);
 
 		u32* ucode_src = rsx::method_registers.transform_program.data() + (transform_program_start * 4);
 		u32* ucode_dst = current_vertex_program.data.data();

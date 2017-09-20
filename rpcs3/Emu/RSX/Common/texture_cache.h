@@ -109,18 +109,24 @@ namespace rsx
 			std::vector<section_storage_type> data;  //Stored data
 			std::atomic_int valid_count = { 0 };  //Number of usable (non-dirty) blocks
 			u32 max_range = 0;  //Largest stored block
+			u32 max_addr = 0;
+			u32 min_addr = UINT32_MAX;
 
-			void notify(u32 data_size)
+			void notify(u32 addr, u32 data_size)
 			{
 				verify(HERE), valid_count >= 0;
 				max_range = std::max(data_size, max_range);
+				max_addr = std::max(max_addr, addr);
+				min_addr = std::min(min_addr, addr);
 				valid_count++;
 			}
 
-			void add(section_storage_type& section, u32 data_size)
+			void add(section_storage_type& section, u32 addr, u32 data_size)
 			{
 				verify(HERE), valid_count >= 0;
 				max_range = std::max(data_size, max_range);
+				max_addr = std::max(max_addr, addr);
+				min_addr = std::min(min_addr, addr);
 				valid_count++;
 
 				data.push_back(std::move(section));
@@ -187,7 +193,7 @@ namespace rsx
 				if (trampled_range.first < trampled_range.second)
 				{
 					//Only if a valid range, ignore empty sets
-					if (trampled_range.first >= (base + range_data.max_range + get_block_size()) || base >= trampled_range.second)
+					if (trampled_range.first >= (range_data.max_addr + range_data.max_range) || range_data.min_addr >= trampled_range.second)
 						continue;
 				}
 
@@ -257,7 +263,7 @@ namespace rsx
 				if (trampled_range.first < trampled_range.second)
 				{
 					//Only if a valid range, ignore empty sets
-					if (trampled_range.first >= (base + range_data.max_range + get_block_size()) || base >= trampled_range.second)
+					if (trampled_range.first >= (range_data.max_addr + range_data.max_range) || range_data.min_addr >= trampled_range.second)
 						continue;
 				}
 
@@ -374,7 +380,7 @@ namespace rsx
 						if (!confirm_dimensions || tex.matches(rsx_address, width, height, mipmaps))
 						{
 							if (!tex.is_locked())
-								range_data.notify(rsx_size);
+								range_data.notify(rsx_address, rsx_size);
 
 							return tex;
 						}
@@ -396,14 +402,14 @@ namespace rsx
 							free_texture_section(tex);
 						}
 
-						range_data.notify(rsx_size);
+						range_data.notify(rsx_address, rsx_size);
 						return tex;
 					}
 				}
 			}
 
 			section_storage_type tmp;
-			m_cache[block_address].add(tmp, rsx_size);
+			m_cache[block_address].add(tmp, rsx_address, rsx_size);
 			return m_cache[block_address].data.back();
 		}
 
