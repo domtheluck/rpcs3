@@ -919,7 +919,7 @@ namespace rsx
 			bool is_memcpy = false;
 			u32 memcpy_bytes_length = 0;
 
-			if (dst_is_argb8 == src_is_argb8 && !dst.swizzled)
+			if (!src_is_render_target && !dst_is_render_target && dst_is_argb8 == src_is_argb8 && !dst.swizzled)
 			{
 				if ((src.slice_h == 1 && dst.clip_height == 1) ||
 					(dst.clip_width == src.width && dst.clip_height == src.slice_h && src.pitch == dst.pitch))
