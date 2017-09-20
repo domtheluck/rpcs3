@@ -587,11 +587,11 @@ namespace vk
 			purge_cache();
 		}
 
-		bool is_depth_texture(const u32 texaddr) override
+		bool is_depth_texture(const u32 rsx_address) override
 		{
 			reader_lock lock(m_cache_mutex);
 
-			auto found = m_cache.find(texaddr);
+			auto found = m_cache.find(get_block_address(rsx_address));
 			if (found == m_cache.end())
 				return false;
 
@@ -601,6 +601,9 @@ namespace vk
 			for (auto& tex : found->second.data)
 			{
 				if (tex.is_dirty())
+					continue;
+
+				if (!tex.overlaps(rsx_address))
 					continue;
 
 				switch (tex.get_format())

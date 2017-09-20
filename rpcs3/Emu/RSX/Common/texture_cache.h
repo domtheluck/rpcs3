@@ -164,6 +164,9 @@ namespace rsx
 		virtual void enforce_surface_creation_type(section_storage_type& section, const texture_create_flags expected) = 0;
 		virtual void insert_texture_barrier() = 0;
 
+		constexpr u32 get_block_size() const { return 0x1000000; }
+		inline u32 get_block_address(u32 address) const { return (address & ~0xFFFFFF); }
+
 	private:
 		//Internal implementation methods
 		bool invalidate_range_impl(u32 address, u32 range, bool unprotect)
@@ -305,9 +308,6 @@ namespace rsx
 
 			return response;
 		}
-
-		constexpr u32 get_block_size() const { return 0x1000000; }
-		inline u32 get_block_address(u32 address) const { return (address & ~0xFFFFFF);  }
 
 	public:
 

@@ -476,6 +476,19 @@ namespace gl
 		{
 			u32 dst_id = 0;
 
+			GLenum ifmt;
+			glBindTexture(GL_TEXTURE_2D, src_id);
+			glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, (GLint*)&ifmt);
+
+			switch (ifmt)
+			{
+			case GL_DEPTH_COMPONENT16:
+			case GL_DEPTH_COMPONENT24:
+			case GL_DEPTH24_STENCIL8:
+				sized_internal_fmt = ifmt;
+				break;
+			}
+
 			glGenTextures(1, &dst_id);
 			glBindTexture(GL_TEXTURE_2D, dst_id);
 
@@ -627,7 +640,7 @@ namespace gl
 		{
 			reader_lock lock(m_cache_mutex);
 
-/*			auto found = m_cache.find(rsx_address);
+			auto found = m_cache.find(get_block_address(rsx_address));
 			if (found == m_cache.end())
 				return false;
 
@@ -639,8 +652,11 @@ namespace gl
 				if (tex.is_dirty())
 					continue;
 
+				if (!tex.overlaps(rsx_address))
+					continue;
+
 				return tex.is_depth_texture();
-			}*/
+			}
 
 			return false;
 		}
