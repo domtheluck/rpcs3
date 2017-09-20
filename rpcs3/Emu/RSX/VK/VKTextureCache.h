@@ -39,7 +39,7 @@ namespace vk
 			rsx::buffered_section::reset(base, length, policy);
 		}
 
-		void create(const u16 w, const u16 h, const u16 depth, const u16 mipmaps, vk::image_view *view, vk::image *image, const u32 rsx_pitch = 0, bool managed=true)
+		void create(const u16 w, const u16 h, const u16 depth, const u16 mipmaps, vk::image_view *view, vk::image *image, const u32 rsx_pitch=0, bool managed=true)
 		{
 			width = w;
 			height = h;
@@ -52,8 +52,12 @@ namespace vk
 			if (managed) managed_texture.reset(image);
 
 			//TODO: Properly compute these values
-			this->rsx_pitch = rsx_pitch;
-			real_pitch = cpu_address_range / height;
+			if (rsx_pitch > 0)
+				this->rsx_pitch = rsx_pitch;
+			else
+				this->rsx_pitch = cpu_address_range / height;
+
+			real_pitch = vk::get_format_texel_width(image->info.format) * width;
 
 			//Even if we are managing the same vram section, we cannot guarantee contents are static
 			//The create method is only invoked when a new mangaged session is required
