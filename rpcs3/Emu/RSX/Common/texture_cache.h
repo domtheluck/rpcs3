@@ -932,6 +932,7 @@ namespace rsx
 
 			reader_lock lock(m_cache_mutex);
 			section_storage_type* cached_dest = nullptr;
+			bool invalidate_dst_range = false;
 
 			if (!dst_is_render_target)
 			{
@@ -941,45 +942,38 @@ namespace rsx
 				dst_area.y1 += dst.offset_y;
 				dst_area.y2 += dst.offset_y;
 
-				//First check if this surface exists in VRAM with exact dimensions
-				//Since scaled GPU resources are not invalidated by the CPU, we need to reuse older surfaces if possible
-				cached_dest = find_texture_from_dimensions(dst.rsx_address, dst_dimensions.width, dst_dimensions.height);
-
 				//Check for any available region that will fit this one
-				if (!cached_dest)
+				auto overlapping_surfaces = find_texture_from_range(dst_address, dst.pitch * dst.clip_height);
+
+				for (auto surface: overlapping_surfaces)
 				{
-					auto overlapping_surfaces = find_texture_from_range(dst_address, dst.pitch * dst.clip_height);
+					if (surface->get_context() != rsx::texture_upload_context::blit_engine_dst)
+						continue;
 
-					for (auto surface: overlapping_surfaces)
+					const auto old_dst_area = dst_area;
+					if (const u32 address_offset = dst_address - surface->get_section_base())
 					{
-						if (surface->get_context() != rsx::texture_upload_context::blit_engine_dst)
-							continue;
+						const u16 bpp = dst_is_argb8 ? 4 : 2;
+						const u16 offset_y = address_offset / dst.pitch;
+						const u16 offset_x = address_offset % dst.pitch;
+						const u16 offset_x_in_block = offset_x / bpp;
 
-						const auto old_dst_area = dst_area;
-						if (const u32 address_offset = dst_address - surface->get_section_base())
-						{
-							const u16 bpp = dst_is_argb8 ? 4 : 2;
-							const u16 offset_y = address_offset / dst.pitch;
-							const u16 offset_x = address_offset % dst.pitch;
-							const u16 offset_x_in_block = offset_x / bpp;
+						dst_area.x1 += offset_x_in_block;
+						dst_area.x2 += offset_x_in_block;
+						dst_area.y1 += offset_y;
+						dst_area.y2 += offset_y;
+					}
 
-							dst_area.x1 += offset_x_in_block;
-							dst_area.x2 += offset_x_in_block;
-							dst_area.y1 += offset_y;
-							dst_area.y2 += offset_y;
-						}
-
-						//Validate clipping region
-						if ((unsigned)dst_area.x2 <= surface->get_width() &&
-							(unsigned)dst_area.y2 <= surface->get_height())
-						{
-							cached_dest = surface;
-							break;
-						}
-						else
-						{
-							dst_area = old_dst_area;
-						}
+					//Validate clipping region
+					if ((unsigned)dst_area.x2 <= surface->get_width() &&
+						(unsigned)dst_area.y2 <= surface->get_height())
+					{
+						cached_dest = surface;
+						break;
+					}
+					else
+					{
+						dst_area = old_dst_area;
 					}
 				}
 
@@ -1000,6 +994,10 @@ namespace rsx
 					invalidate_range_impl(dst_address, memcpy_bytes_length, true);
 					memcpy(dst.pixels, src.pixels, memcpy_bytes_length);
 					return true;
+				}
+				else if (overlapping_surfaces.size() > 0)
+				{
+					invalidate_dst_range = true;
 				}
 			}
 			else
@@ -1116,6 +1114,11 @@ namespace rsx
 
 				dest_texture = 0;
 				cached_dest = nullptr;
+			}
+			else if (invalidate_dst_range)
+			{
+				lock.upgrade();
+				invalidate_range_impl(dst_address, dst.pitch * dst.height, true);
 			}
 
 			//Validate clipping region

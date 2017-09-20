@@ -497,9 +497,12 @@ namespace vk
 			cached_texture_section& region = find_cached_texture(rsx_address, rsx_size, true, width, height, 0);
 			region.reset(rsx_address, rsx_size);
 			region.create(width, height, depth, mipmaps, view, image);
-			region.protect(utils::protection::ro);
 			region.set_dirty(false);
 			region.set_context(context);
+
+			//Its not necessary to lock blit dst textures as they are just reused as necessary
+			if (context != rsx::texture_upload_context::blit_engine_dst || g_cfg.video.strict_rendering_mode)
+				region.protect(utils::protection::ro);
 
 			read_only_range = region.get_min_max(read_only_range);
 			return &region;

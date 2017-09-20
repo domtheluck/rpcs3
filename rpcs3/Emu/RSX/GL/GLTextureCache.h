@@ -552,11 +552,14 @@ namespace gl
 			}
 
 			auto& cached = create_texture(vram_texture, rsx_address, rsx_size, width, height);
-			cached.protect(utils::protection::ro);
 			cached.set_dirty(false);
 			cached.set_depth_flag(depth_flag);
 			cached.set_view_flags(flags);
 			cached.set_context(context);
+
+			//Its not necessary to lock blit dst textures as they are just reused as necessary
+			if (context != rsx::texture_upload_context::blit_engine_dst || g_cfg.video.strict_rendering_mode)
+				cached.protect(utils::protection::ro);
 
 			return &cached;
 		}
