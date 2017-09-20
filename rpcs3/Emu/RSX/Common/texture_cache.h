@@ -936,12 +936,6 @@ namespace rsx
 
 			if (!dst_is_render_target)
 			{
-				//Apply region offsets
-				dst_area.x1 += dst.offset_x;
-				dst_area.x2 += dst.offset_x;
-				dst_area.y1 += dst.offset_y;
-				dst_area.y2 += dst.offset_y;
-
 				//Check for any available region that will fit this one
 				auto overlapping_surfaces = find_texture_from_range(dst_address, dst.pitch * dst.clip_height);
 
