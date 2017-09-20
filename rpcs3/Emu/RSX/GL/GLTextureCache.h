@@ -572,7 +572,7 @@ namespace gl
 			//Swizzling is ignored for blit engine copy and emulated using remapping
 			bool input_swizzled = (context == rsx::texture_upload_context::blit_engine_src)? false : swizzled;
 
-			gl::upload_texture(section->get_raw_texture(), rsx_address, gcm_format, width, height, depth, mipmaps, pitch, input_swizzled, type, subresource_layout, remap_vector, false);
+			gl::upload_texture(section->get_raw_texture(), rsx_address, gcm_format, width, height, depth, mipmaps, input_swizzled, type, subresource_layout, remap_vector, false);
 			return section;
 		}
 

@@ -653,17 +653,16 @@ namespace rsx
 		image_view_type upload_texture(commandbuffer_type& cmd, RsxTextureType& tex, surface_store_type& m_rtts)
 		{
 			const u32 texaddr = rsx::get_address(tex.offset(), tex.location());
-			const u32 range = (u32)get_texture_size(tex);
+			const u32 tex_size = (u32)get_texture_size(tex);
 
 			const u32 format = tex.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
 			const u32 tex_width = tex.width();
 			const u32 tex_height = tex.height();
-			const u32 native_pitch = (tex_width * get_format_block_size_in_bytes(format));
-			const u32 tex_pitch = (tex.pitch() == 0) ? native_pitch : tex.pitch();
+			const u32 tex_pitch = (tex_size / tex_height); //NOTE: Compressed textures dont have a real pitch (tex_size = (w*h)/6)
 
-			if (!texaddr || !range)
+			if (!texaddr || !tex_size)
 			{
-				LOG_ERROR(RSX, "Texture upload requested but texture not found, (address=0x%X, size=0x%X)", texaddr, range);
+				LOG_ERROR(RSX, "Texture upload requested but texture not found, (address=0x%X, size=0x%X)", texaddr, tex_size);
 				return 0;
 			}
 
@@ -721,7 +720,7 @@ namespace rsx
 				}
 
 				//Find based on range instead
-				auto overlapping_surfaces = find_texture_from_range(texaddr, tex_pitch * tex_height);
+				auto overlapping_surfaces = find_texture_from_range(texaddr, tex_size);
 				if (!overlapping_surfaces.empty())
 				{
 					for (auto surface : overlapping_surfaces)
@@ -756,6 +755,7 @@ namespace rsx
 			 * a bound render target. We can bypass the expensive download in this case
 			 */
 
+			const u32 native_pitch = tex_width * get_format_block_size_in_bytes(format);
 			const f32 internal_scale = (f32)tex_pitch / native_pitch;
 			const u32 internal_width = (const u32)(tex_width * internal_scale);
 
