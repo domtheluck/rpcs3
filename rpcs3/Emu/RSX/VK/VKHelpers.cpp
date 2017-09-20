@@ -162,6 +162,11 @@ namespace vk
 			return 8;
 		case VK_FORMAT_R32G32B32A32_SFLOAT:
 			return 16;
+		case VK_FORMAT_D16_UNORM:
+			return 2;
+		case VK_FORMAT_D32_SFLOAT_S8_UINT: //TODO: Translate to D24S8
+		case VK_FORMAT_D24_UNORM_S8_UINT:
+			return 4;
 		}
 
 		fmt::throw_exception("Unexpected vkFormat 0x%X", (u32)format);
