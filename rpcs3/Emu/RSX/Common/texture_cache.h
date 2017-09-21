@@ -154,6 +154,9 @@ namespace rsx
 		std::pair<u32, u32> no_access_range = std::make_pair(0xFFFFFFFF, 0);
 
 		std::unordered_map<u32, framebuffer_memory_characteristics> m_cache_miss_statistics_table;
+
+		//Set when a hw blit engine incompatibility is detected
+		bool blit_engine_incompatibility_warning_raised = false;
 		
 		//Memory usage
 		const s32 m_max_zombie_objects = 128; //Limit on how many texture objects to keep around for reuse after they are invalidated
@@ -315,13 +318,27 @@ namespace rsx
 			return response;
 		}
 
+		bool is_hw_blit_engine_compatible(const u32 format) const
+		{
+			switch (format)
+			{
+			case CELL_GCM_TEXTURE_A8R8G8B8:
+			case CELL_GCM_TEXTURE_R5G6B5:
+			case CELL_GCM_TEXTURE_DEPTH16:
+			case CELL_GCM_TEXTURE_DEPTH24_D8:
+				return true;
+			default:
+				return false;
+			}
+		}
+
 	public:
 
 		texture_cache() {}
 		~texture_cache() {}
 		
 		virtual void destroy() = 0;
-		virtual bool is_depth_texture(const u32) = 0;
+		virtual bool is_depth_texture(const u32, const u32) = 0;
 		virtual void on_frame_end() = 0;
 
 		std::vector<section_storage_type*> find_texture_from_range(u32 rsx_address, u32 range)
@@ -502,7 +519,7 @@ namespace rsx
 					if (tex.is_dirty()) continue;
 					if (!tex.is_flushable()) continue;
 
-					if (tex.overlaps(address))
+					if (tex.overlaps(address, false))
 						return std::make_tuple(true, &tex);
 				}
 			}
@@ -526,7 +543,7 @@ namespace rsx
 					if (tex.is_dirty()) continue;
 					if (!tex.is_flushable()) continue;
 
-					if (tex.overlaps(address))
+					if (tex.overlaps(address, false))
 						return std::make_tuple(true, &tex);
 				}
 			}
@@ -725,30 +742,42 @@ namespace rsx
 					return cached_texture->get_raw_view();
 				}
 
-				//Find based on range instead
-				auto overlapping_surfaces = find_texture_from_range(texaddr, tex_size);
-				if (!overlapping_surfaces.empty())
+				if ((!blit_engine_incompatibility_warning_raised && g_cfg.video.use_gpu_texture_scaling) || is_hw_blit_engine_compatible(format))
 				{
-					for (auto surface : overlapping_surfaces)
+					//Find based on range instead
+					auto overlapping_surfaces = find_texture_from_range(texaddr, tex_size);
+					if (!overlapping_surfaces.empty())
 					{
-						if (surface->get_context() != rsx::texture_upload_context::blit_engine_dst)
-							continue;
-
-						if (surface->get_width() >= tex_width && surface->get_height() >= tex_height)
+						for (auto surface : overlapping_surfaces)
 						{
-							u16 offset_x = 0, offset_y = 0;
-							if (const u32 address_offset = texaddr - surface->get_section_base())
-							{
-								const auto bpp = get_format_block_size_in_bytes(format);
-								offset_y = address_offset / tex_pitch;
-								offset_x = (address_offset % tex_pitch) / bpp;
-							}
+							if (surface->get_context() != rsx::texture_upload_context::blit_engine_dst)
+								continue;
 
-							if ((offset_x + tex_width) <= surface->get_width() &&
-								(offset_y + tex_height) <= surface->get_height())
+							if (surface->get_width() >= tex_width && surface->get_height() >= tex_height)
 							{
-								auto src_image = surface->get_raw_texture();
-								return create_temporary_subresource_view(cmd, &src_image, format, offset_x, offset_y, tex_width, tex_height);
+								u16 offset_x = 0, offset_y = 0;
+								if (const u32 address_offset = texaddr - surface->get_section_base())
+								{
+									const auto bpp = get_format_block_size_in_bytes(format);
+									offset_y = address_offset / tex_pitch;
+									offset_x = (address_offset % tex_pitch) / bpp;
+								}
+
+								if ((offset_x + tex_width) <= surface->get_width() &&
+									(offset_y + tex_height) <= surface->get_height())
+								{
+									if (!blit_engine_incompatibility_warning_raised && !is_hw_blit_engine_compatible(format))
+									{
+										LOG_ERROR(RSX, "Format 0x%X is not compatible with the hardware blit acceleration."
+												" Consider turning off GPU texture scaling in the options to partially handle textures on your CPU.", format);
+										blit_engine_incompatibility_warning_raised = true;
+										break;
+									}
+
+									auto src_image = surface->get_raw_texture();
+									if (auto result = create_temporary_subresource_view(cmd, &src_image, format, offset_x, offset_y, tex_width, tex_height))
+										return result;
+								}
 							}
 						}
 					}

@@ -587,7 +587,7 @@ namespace vk
 			purge_cache();
 		}
 
-		bool is_depth_texture(const u32 rsx_address) override
+		bool is_depth_texture(const u32 rsx_address, const u32 rsx_size) override
 		{
 			reader_lock lock(m_cache_mutex);
 
@@ -603,17 +603,20 @@ namespace vk
 				if (tex.is_dirty())
 					continue;
 
-				if (!tex.overlaps(rsx_address))
+				if (!tex.overlaps(rsx_address, true))
 					continue;
 
-				switch (tex.get_format())
+				if ((rsx_address + rsx_size - tex.get_section_base()) <= tex.get_section_size())
 				{
-				case VK_FORMAT_D16_UNORM:
-				case VK_FORMAT_D32_SFLOAT_S8_UINT:
-				case VK_FORMAT_D24_UNORM_S8_UINT:
-					return true;
-				default:
-					return false;
+					switch (tex.get_format())
+					{
+					case VK_FORMAT_D16_UNORM:
+					case VK_FORMAT_D32_SFLOAT_S8_UINT:
+					case VK_FORMAT_D24_UNORM_S8_UINT:
+						return true;
+					default:
+						return false;
+					}
 				}
 			}
 

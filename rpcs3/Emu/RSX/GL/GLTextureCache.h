@@ -636,7 +636,7 @@ namespace gl
 			m_hw_blitter.destroy();
 		}
 		
-		bool is_depth_texture(const u32 rsx_address) override
+		bool is_depth_texture(const u32 rsx_address, const u32 rsx_size) override
 		{
 			reader_lock lock(m_cache_mutex);
 
@@ -652,10 +652,11 @@ namespace gl
 				if (tex.is_dirty())
 					continue;
 
-				if (!tex.overlaps(rsx_address))
+				if (!tex.overlaps(rsx_address, true))
 					continue;
 
-				return tex.is_depth_texture();
+				if ((rsx_address + rsx_size - tex.get_section_base()) <= tex.get_section_size())
+					return tex.is_depth_texture();
 			}
 
 			return false;

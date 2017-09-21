@@ -939,7 +939,7 @@ bool GLGSRender::check_program_state()
 		{
 			surface = m_rtts.get_texture_from_depth_stencil_if_applicable(texaddr);
 
-			if (!surface && m_gl_texture_cache.is_depth_texture(texaddr))
+			if (!surface && m_gl_texture_cache.is_depth_texture(texaddr, (u32)get_texture_size(tex)))
 				return std::make_tuple(true, 0);
 		}
 
